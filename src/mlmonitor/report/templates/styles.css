@@ -1,0 +1,293 @@
+/* MLMonitor — Estilos del reporte PDF */
+
+@page {
+    size: A4;
+    margin: 2cm 2cm 2.5cm 2cm;
+    @bottom-right {
+        content: "Página " counter(page) " de " counter(pages);
+        font-size: 9pt;
+        color: #666;
+    }
+    @bottom-left {
+        content: "MLMonitor — Confidencial";
+        font-size: 9pt;
+        color: #999;
+    }
+}
+
+* {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+}
+
+body {
+    font-family: "DejaVu Sans", Arial, sans-serif;
+    font-size: 10pt;
+    color: #1a1a2e;
+    line-height: 1.5;
+}
+
+/* ---- Portada ---- */
+.cover-page {
+    page-break-after: always;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    align-items: flex-start;
+    min-height: 100vh;
+    padding: 3cm 2cm;
+    background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
+    color: white;
+}
+
+.cover-logo {
+    font-size: 11pt;
+    letter-spacing: 0.3em;
+    text-transform: uppercase;
+    color: #e94560;
+    margin-bottom: 0.5cm;
+    font-weight: bold;
+}
+
+.cover-title {
+    font-size: 28pt;
+    font-weight: bold;
+    line-height: 1.2;
+    margin-bottom: 0.3cm;
+    color: white;
+}
+
+.cover-subtitle {
+    font-size: 16pt;
+    color: #a0c4ff;
+    margin-bottom: 1.5cm;
+}
+
+.cover-meta {
+    margin-top: 1cm;
+    border-top: 1px solid rgba(255,255,255,0.3);
+    padding-top: 0.5cm;
+}
+
+.cover-meta p {
+    font-size: 10pt;
+    color: rgba(255,255,255,0.8);
+    margin-bottom: 0.2cm;
+}
+
+.cover-meta strong {
+    color: white;
+}
+
+/* ---- Headings ---- */
+h1 {
+    font-size: 16pt;
+    color: #0f3460;
+    border-bottom: 2px solid #e94560;
+    padding-bottom: 0.2cm;
+    margin-top: 0.8cm;
+    margin-bottom: 0.5cm;
+    page-break-after: avoid;
+}
+
+h2 {
+    font-size: 13pt;
+    color: #16213e;
+    border-left: 4px solid #e94560;
+    padding-left: 0.3cm;
+    margin-top: 0.6cm;
+    margin-bottom: 0.4cm;
+    page-break-after: avoid;
+}
+
+h3 {
+    font-size: 11pt;
+    color: #0f3460;
+    margin-top: 0.4cm;
+    margin-bottom: 0.3cm;
+    page-break-after: avoid;
+}
+
+/* ---- Status badges ---- */
+.badge {
+    display: inline-block;
+    padding: 0.1cm 0.3cm;
+    border-radius: 3px;
+    font-weight: bold;
+    font-size: 9pt;
+    letter-spacing: 0.05em;
+}
+
+.badge-ok {
+    background: #d4edda;
+    color: #155724;
+    border: 1px solid #c3e6cb;
+}
+
+.badge-warning {
+    background: #fff3cd;
+    color: #856404;
+    border: 1px solid #ffc107;
+}
+
+.badge-critical {
+    background: #f8d7da;
+    color: #721c24;
+    border: 1px solid #f5c6cb;
+}
+
+/* ---- Tables ---- */
+table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-bottom: 0.4cm;
+    font-size: 9pt;
+    page-break-inside: avoid;
+}
+
+thead th {
+    background: #0f3460;
+    color: white;
+    padding: 0.15cm 0.3cm;
+    text-align: left;
+    font-weight: bold;
+}
+
+tbody tr:nth-child(even) {
+    background: #f8f9fa;
+}
+
+tbody tr:hover {
+    background: #e8f4f8;
+}
+
+td, th {
+    padding: 0.12cm 0.3cm;
+    border: 1px solid #dee2e6;
+    vertical-align: middle;
+}
+
+td.value-ok { color: #155724; font-weight: bold; }
+td.value-warning { color: #856404; font-weight: bold; }
+td.value-critical { color: #721c24; font-weight: bold; }
+
+/* ---- Fleet summary cards ---- */
+.fleet-cards {
+    display: flex;
+    gap: 0.5cm;
+    margin: 0.5cm 0;
+    flex-wrap: wrap;
+}
+
+.fleet-card {
+    flex: 1;
+    min-width: 3cm;
+    padding: 0.4cm;
+    border-radius: 6px;
+    text-align: center;
+    border: 1px solid #dee2e6;
+}
+
+.fleet-card .card-number {
+    font-size: 28pt;
+    font-weight: bold;
+    line-height: 1;
+}
+
+.fleet-card .card-label {
+    font-size: 9pt;
+    color: #666;
+    margin-top: 0.1cm;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+.fleet-card-total { background: #e8f4f8; }
+.fleet-card-ok { background: #d4edda; }
+.fleet-card-ok .card-number { color: #155724; }
+.fleet-card-warning { background: #fff3cd; }
+.fleet-card-warning .card-number { color: #856404; }
+.fleet-card-critical { background: #f8d7da; }
+.fleet-card-critical .card-number { color: #721c24; }
+
+/* ---- Narrative box ---- */
+.narrative-box {
+    background: #f8f9fa;
+    border-left: 4px solid #0f3460;
+    padding: 0.4cm 0.5cm;
+    margin: 0.4cm 0;
+    font-size: 10pt;
+    color: #2c3e50;
+    border-radius: 0 4px 4px 0;
+    page-break-inside: avoid;
+}
+
+/* ---- Alert list ---- */
+.alert-list {
+    list-style: none;
+    padding: 0;
+}
+
+.alert-list li {
+    padding: 0.15cm 0.3cm;
+    margin-bottom: 0.1cm;
+    border-radius: 3px;
+    font-size: 9pt;
+}
+
+.alert-list li.alert-warning {
+    background: #fff3cd;
+    border-left: 3px solid #ffc107;
+}
+
+.alert-list li.alert-critical {
+    background: #f8d7da;
+    border-left: 3px solid #dc3545;
+}
+
+/* ---- Actions table ---- */
+.actions-table td:first-child {
+    width: 1.5cm;
+    text-align: center;
+}
+
+.priority-critico { color: #721c24; font-weight: bold; }
+.priority-alta { color: #856404; font-weight: bold; }
+.priority-media { color: #0c5460; font-weight: bold; }
+.priority-monitoreo { color: #155724; font-weight: bold; }
+
+/* ---- Section divider ---- */
+.segment-section {
+    page-break-before: always;
+}
+
+.segment-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    margin-bottom: 0.3cm;
+}
+
+/* ---- Ranking table ---- */
+.ranking-table .rank-num {
+    font-size: 14pt;
+    font-weight: bold;
+    color: #0f3460;
+    text-align: center;
+}
+
+/* ---- Footer note ---- */
+.footer-note {
+    font-size: 8pt;
+    color: #999;
+    margin-top: 1cm;
+    border-top: 1px solid #eee;
+    padding-top: 0.3cm;
+}
+
+/* ---- Metric value cells ---- */
+.metric-row td:nth-child(2) {
+    font-family: "DejaVu Sans Mono", monospace;
+    font-size: 9pt;
+}

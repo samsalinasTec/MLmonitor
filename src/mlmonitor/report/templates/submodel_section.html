@@ -1,0 +1,183 @@
+<!-- Sección por segmento — incluida en fleet_report.html -->
+<div class="segment-section">
+    <div class="segment-header">
+        <h1>Segmento {{ seg.segment_id }} — {{ seg.segment_description }}</h1>
+        <span class="badge badge-{{ seg.overall_status | lower }}">{{ seg.overall_status }}</span>
+    </div>
+
+    <!-- Metadata del segmento -->
+    <h2>Metadata</h2>
+    <table>
+        <thead>
+            <tr>
+                <th>Campo</th>
+                <th>Valor</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr><td>Modelo</td><td>{{ context.model_id }}</td></tr>
+            <tr><td>Segmento</td><td>{{ seg.segment_id }} — {{ seg.segment_description }}</td></tr>
+            <tr><td>Semana de cálculo</td><td>{{ context.calculation_week }}</td></tr>
+            <tr><td>Semana de performance (lag {{ context.lag_semanas }}s)</td><td>{{ context.performance_week }}</td></tr>
+            <tr><td>Estado</td><td><span class="badge badge-{{ seg.overall_status | lower }}">{{ seg.overall_status }}</span></td></tr>
+        </tbody>
+    </table>
+
+    <!-- Narrativa LLM -->
+    {% if seg_narrative %}
+    <h2>Análisis</h2>
+    <div class="narrative-box">{{ seg_narrative | nl2br }}</div>
+    {% endif %}
+
+    <!-- Alertas activas -->
+    {% if seg.active_alerts %}
+    <h2>Alertas Activas</h2>
+    <ul class="alert-list">
+        {% for alert in seg.active_alerts %}
+        <li class="alert-{{ alert.label | lower }}">
+            <strong>[{{ alert.label }}]</strong>
+            {{ alert.metric }}: {{ "%.4f" | format(alert.value or 0) }}
+        </li>
+        {% endfor %}
+    </ul>
+    {% endif %}
+
+    <!-- Métricas clave -->
+    <h2>Métricas Clave</h2>
+    <table>
+        <thead>
+            <tr>
+                <th>Métrica</th>
+                <th>Valor</th>
+                <th>Estado</th>
+                <th>Nota</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% if seg.psi_max is not none %}
+            <tr class="metric-row">
+                <td>PSI Máximo</td>
+                <td class="value-{{ 'ok' if seg.psi_max < 0.10 else 'warning' if seg.psi_max < 0.20 else 'critical' }}">
+                    {{ "%.4f" | format(seg.psi_max) }}
+                </td>
+                <td>
+                    <span class="badge badge-{{ 'ok' if seg.psi_max < 0.10 else 'warning' if seg.psi_max < 0.20 else 'critical' }}">
+                        {{ 'OK' if seg.psi_max < 0.10 else 'WARNING' if seg.psi_max < 0.20 else 'CRITICAL' }}
+                    </span>
+                </td>
+                <td>Variable: {{ seg.psi_max_variable }}</td>
+            </tr>
+            {% endif %}
+            {% if seg.gini is not none %}
+            <tr class="metric-row">
+                <td>Gini</td>
+                <td class="value-{{ 'ok' if seg.gini >= 0.35 else 'warning' if seg.gini >= 0.25 else 'critical' }}">
+                    {{ "%.4f" | format(seg.gini) }}
+                </td>
+                <td>
+                    <span class="badge badge-{{ 'ok' if seg.gini >= 0.35 else 'warning' if seg.gini >= 0.25 else 'critical' }}">
+                        {{ 'OK' if seg.gini >= 0.35 else 'WARNING' if seg.gini >= 0.25 else 'CRITICAL' }}
+                    </span>
+                </td>
+                <td>Performance con lag {{ context.lag_semanas }}s</td>
+            </tr>
+            {% endif %}
+            {% if seg.ks is not none %}
+            <tr class="metric-row">
+                <td>KS</td>
+                <td class="value-{{ 'ok' if seg.ks >= 0.20 else 'warning' if seg.ks >= 0.15 else 'critical' }}">
+                    {{ "%.4f" | format(seg.ks) }}
+                </td>
+                <td>
+                    <span class="badge badge-{{ 'ok' if seg.ks >= 0.20 else 'warning' if seg.ks >= 0.15 else 'critical' }}">
+                        {{ 'OK' if seg.ks >= 0.20 else 'WARNING' if seg.ks >= 0.15 else 'CRITICAL' }}
+                    </span>
+                </td>
+                <td>Performance con lag {{ context.lag_semanas }}s</td>
+            </tr>
+            {% endif %}
+            <tr class="metric-row">
+                <td>Violaciones RollForward</td>
+                <td class="value-{{ 'ok' if seg.roll_forward_violations == 0 else 'warning' if seg.roll_forward_violations < 2 else 'critical' }}">
+                    {{ seg.roll_forward_violations }}
+                </td>
+                <td>
+                    <span class="badge badge-{{ 'ok' if seg.roll_forward_violations == 0 else 'warning' if seg.roll_forward_violations < 2 else 'critical' }}">
+                        {{ 'OK' if seg.roll_forward_violations == 0 else 'WARNING' if seg.roll_forward_violations < 2 else 'CRITICAL' }}
+                    </span>
+                </td>
+                <td>Bins con orden incorrecto</td>
+            </tr>
+            <tr class="metric-row">
+                <td>Violaciones PaymentRate</td>
+                <td class="value-{{ 'ok' if seg.payment_rate_violations == 0 else 'warning' if seg.payment_rate_violations < 2 else 'critical' }}">
+                    {{ seg.payment_rate_violations }}
+                </td>
+                <td>
+                    <span class="badge badge-{{ 'ok' if seg.payment_rate_violations == 0 else 'warning' if seg.payment_rate_violations < 2 else 'critical' }}">
+                        {{ 'OK' if seg.payment_rate_violations == 0 else 'WARNING' if seg.payment_rate_violations < 2 else 'CRITICAL' }}
+                    </span>
+                </td>
+                <td>Bins con orden incorrecto</td>
+            </tr>
+        </tbody>
+    </table>
+
+    <!-- Tabla de negocio por decil -->
+    {% if seg.business_table %}
+    <h2>Métricas de Negocio por Decil (lag {{ context.lag_semanas }}s)</h2>
+    <p style="font-size:9pt; color:#666; margin-bottom:0.2cm;">
+        Score bajo = mayor riesgo. RollForward debe decrecer; PaymentRate debe crecer conforme sube el score.
+    </p>
+    <table>
+        <thead>
+            <tr>
+                <th>Score Bin</th>
+                <th>Midpoint</th>
+                <th>Total Clientes</th>
+                <th>RollForward (%)</th>
+                <th>PaymentRate (%)</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for row in seg.business_table %}
+            <tr>
+                <td>{{ row.score_bin }}</td>
+                <td>{{ row.score_midpoint }}</td>
+                <td>{{ row.count_total | int }}</td>
+                <td>{{ "%.1f" | format((row.roll_forward_rate or 0) * 100) }}%</td>
+                <td>{{ "%.1f" | format((row.payment_rate or 0) * 100) }}%</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% endif %}
+
+    <!-- Acciones recomendadas -->
+    {% if seg_actions %}
+    <h2>Acciones Recomendadas</h2>
+    <table class="actions-table">
+        <thead>
+            <tr>
+                <th>Prioridad</th>
+                <th>Acción</th>
+                <th>Detalle</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for action in seg_actions %}
+            <tr>
+                <td>
+                    <span class="priority-{{ action.prioridad | lower | replace('[', '') | replace(']', '') }}">
+                        {{ action.prioridad }}
+                    </span>
+                </td>
+                <td><strong>{{ action.accion }}</strong></td>
+                <td>{{ action.detalle }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+    {% endif %}
+
+</div>

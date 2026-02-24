@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MLMonitor — Reporte de Flota {{ context.model_id }}</title>
+    <style>
+        {% include "styles.css" %}
+    </style>
+</head>
+<body>
+
+<!-- ============================================================ -->
+<!-- PORTADA -->
+<!-- ============================================================ -->
+<div class="cover-page">
+    <div class="cover-logo">MLMonitor</div>
+    <div class="cover-title">Reporte de Monitoreo<br>de Flota de Scorecards</div>
+    <div class="cover-subtitle">{{ context.model_name }}</div>
+    <div class="cover-meta">
+        <p><strong>Modelo:</strong> {{ context.model_id }}</p>
+        <p><strong>Fecha de generación:</strong> {{ generation_date }}</p>
+        <p><strong>Semana de cálculo:</strong> {{ context.calculation_week }}</p>
+        <p><strong>Límite de datos de performance:</strong> {{ context.performance_week }} (lag estructural: {{ context.lag_semanas }} semanas)</p>
+        <p><strong>Sub-scorecards monitoreados:</strong> {{ context.fleet_summary.total }}</p>
+    </div>
+</div>
+
+<!-- ============================================================ -->
+<!-- RESUMEN DE FLOTA -->
+<!-- ============================================================ -->
+<h1>1. Resumen Ejecutivo de Flota</h1>
+
+<!-- Cards de estado -->
+<div class="fleet-cards">
+    <div class="fleet-card fleet-card-total">
+        <div class="card-number">{{ context.fleet_summary.total }}</div>
+        <div class="card-label">Total</div>
+    </div>
+    <div class="fleet-card fleet-card-ok">
+        <div class="card-number">{{ context.fleet_summary.ok }}</div>
+        <div class="card-label">Saludables</div>
+    </div>
+    <div class="fleet-card fleet-card-warning">
+        <div class="card-number">{{ context.fleet_summary.warning }}</div>
+        <div class="card-label">Advertencia</div>
+    </div>
+    <div class="fleet-card fleet-card-critical">
+        <div class="card-number">{{ context.fleet_summary.critical }}</div>
+        <div class="card-label">Críticos</div>
+    </div>
+</div>
+
+<!-- Tabla de estado de flota -->
+<h2>Estado por Segmento</h2>
+<table>
+    <thead>
+        <tr>
+            <th>Segmento</th>
+            <th>Descripción</th>
+            <th>Estado</th>
+            <th>PSI Max</th>
+            <th>Gini</th>
+            <th>KS</th>
+            <th>Alertas</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for seg in context.segments %}
+        <tr>
+            <td><strong>{{ seg.segment_id }}</strong></td>
+            <td>{{ seg.segment_description }}</td>
+            <td><span class="badge badge-{{ seg.overall_status | lower }}">{{ seg.overall_status }}</span></td>
+            <td class="value-{{ 'ok' if seg.psi_max is none or seg.psi_max < 0.10 else 'warning' if seg.psi_max < 0.20 else 'critical' }}">
+                {% if seg.psi_max is not none %}{{ "%.3f" | format(seg.psi_max) }}{% else %}—{% endif %}
+            </td>
+            <td class="value-{{ 'ok' if seg.gini is none or seg.gini >= 0.35 else 'warning' if seg.gini >= 0.25 else 'critical' }}">
+                {% if seg.gini is not none %}{{ "%.3f" | format(seg.gini) }}{% else %}—{% endif %}
+            </td>
+            <td class="value-{{ 'ok' if seg.ks is none or seg.ks >= 0.20 else 'warning' if seg.ks >= 0.15 else 'critical' }}">
+                {% if seg.ks is not none %}{{ "%.3f" | format(seg.ks) }}{% else %}—{% endif %}
+            </td>
+            <td>{{ seg.active_alerts | length }}</td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+
+<!-- Narrativa LLM de flota -->
+{% if fleet_narrative %}
+<h2>Análisis Ejecutivo</h2>
+<div class="narrative-box">{{ fleet_narrative | nl2br }}</div>
+{% endif %}
+
+<!-- ============================================================ -->
+<!-- SECCIONES POR SEGMENTO -->
+<!-- ============================================================ -->
+{% for seg in context.segments %}
+{% set seg_narrative = segment_narratives.get(seg.segment_id, '') if segment_narratives else '' %}
+{% set seg_actions = recommended_actions.get(seg.segment_id, []) if recommended_actions else [] %}
+{% include "submodel_section.html" %}
+{% endfor %}
+
+<!-- ============================================================ -->
+<!-- RANKING FINAL -->
+<!-- ============================================================ -->
+<div class="segment-section">
+    <h1>Ranking de Urgencia — Todos los Segmentos</h1>
+    <p style="font-size:9pt; color:#666; margin-bottom:0.4cm;">
+        Ordenado por nivel de urgencia: CRÍTICO → WARNING → OK.
+        Los valores de performance (Gini, KS, RollForward) corresponden a la semana {{ context.performance_week }} (lag {{ context.lag_semanas }}s).
+    </p>
+    <table class="ranking-table">
+        <thead>
+            <tr>
+                <th>#</th>
+                <th>Segmento</th>
+                <th>Estado</th>
+                <th>Alertas Activas</th>
+                <th>PSI Max</th>
+                <th>Gini</th>
+                <th>KS</th>
+                <th>RF Violations</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for seg in context.segments %}
+            <tr>
+                <td class="rank-num">{{ loop.index }}</td>
+                <td><strong>{{ seg.segment_id }}</strong> — {{ seg.segment_description }}</td>
+                <td><span class="badge badge-{{ seg.overall_status | lower }}">{{ seg.overall_status }}</span></td>
+                <td>{{ seg.active_alerts | length }}</td>
+                <td>{% if seg.psi_max is not none %}{{ "%.3f" | format(seg.psi_max) }}{% else %}—{% endif %}</td>
+                <td>{% if seg.gini is not none %}{{ "%.3f" | format(seg.gini) }}{% else %}—{% endif %}</td>
+                <td>{% if seg.ks is not none %}{{ "%.3f" | format(seg.ks) }}{% else %}—{% endif %}</td>
+                <td>{{ seg.roll_forward_violations }}</td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+
+    <div class="footer-note">
+        <p>Este reporte fue generado automáticamente por <strong>MLMonitor v0.1.0</strong>.</p>
+        <p>Las métricas de performance (Gini, KS, RollForward, PaymentRate) tienen un lag estructural de <strong>{{ context.lag_semanas }} semanas</strong>.</p>
+        <p>Generado el: {{ generation_date }} | Modelo: {{ context.model_id }}</p>
+    </div>
+</div>
+
+</body>
+</html>

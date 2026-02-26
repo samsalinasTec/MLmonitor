@@ -80,7 +80,7 @@ class TestPSIFromDB:
     def test_psi_returns_float(self, session, model_id, current_week):
         """PSI calculado desde DB retorna un float válido."""
         psi = get_psi_for_variable(
-            session, model_id, "G1", "dias_atraso", current_week
+            session, model_id, "s1", "nivel_endeudamiento", current_week
         )
         assert isinstance(psi, float)
         assert psi >= 0.0
@@ -88,7 +88,7 @@ class TestPSIFromDB:
     def test_all_variables_returns_dict(self, session, model_id, current_week):
         """get_psi_for_all_variables retorna dict con todas las variables."""
         psi_dict = get_psi_for_all_variables(
-            session, model_id, "G1", current_week
+            session, model_id, "s1", current_week
         )
         assert isinstance(psi_dict, dict)
         assert len(psi_dict) > 0
@@ -96,30 +96,30 @@ class TestPSIFromDB:
             assert isinstance(val, float), f"PSI de {var} no es float: {val}"
             assert val >= 0.0
 
-    def test_g3_dias_atraso_psi_is_critical(self, session, model_id, current_week):
-        """G3 debe tener PSI CRITICAL en dias_atraso (anomalía inyectada semana 17-20)."""
+    def test_s3_nivel_endeudamiento_psi_is_critical(self, session, model_id, current_week):
+        """s3 debe tener PSI CRITICAL en nivel_endeudamiento (anomalía inyectada semana 17-20)."""
         psi = get_psi_for_variable(
-            session, model_id, "G3", "dias_atraso", current_week
+            session, model_id, "s3", "nivel_endeudamiento", current_week
         )
         assert psi > 0.20, (
-            f"G3 dias_atraso esperado PSI > 0.20 (CRITICAL), obtenido: {psi:.4f}"
+            f"s3 nivel_endeudamiento esperado PSI > 0.20 (CRITICAL), obtenido: {psi:.4f}"
         )
 
-    def test_s3_saldo_deuda_psi_is_warning(self, session, model_id):
-        """S3 debe tener PSI WARNING en saldo_deuda (anomalía semana 15-20)."""
+    def test_s5_capacidad_pago_psi_is_warning(self, session, model_id):
+        """s5 debe tener PSI WARNING en capacidad_pago (anomalía semana 15-20)."""
         from mlmonitor.data.dummy_generator import _week_date
         week_20 = _week_date(20)
         psi = get_psi_for_variable(
-            session, model_id, "S3", "saldo_deuda", week_20
+            session, model_id, "s5", "capacidad_pago", week_20
         )
         assert psi > 0.10, (
-            f"S3 saldo_deuda esperado PSI > 0.10 (WARNING), obtenido: {psi:.4f}"
+            f"s5 capacidad_pago esperado PSI > 0.10 (WARNING), obtenido: {psi:.4f}"
         )
 
     def test_max_psi_returns_correct_variable(self, session, model_id, current_week):
         """get_max_psi retorna el PSI máximo y la variable correcta."""
         psi_dict = get_psi_for_all_variables(
-            session, model_id, "G3", current_week
+            session, model_id, "s3", current_week
         )
         max_psi, max_var = get_max_psi(psi_dict)
         assert max_psi >= 0.0
@@ -128,11 +128,11 @@ class TestPSIFromDB:
 
     def test_null_rates_returns_dict(self, session, model_id, current_week):
         """get_null_rates retorna dict con tasas de nulos."""
-        null_rates = get_null_rates(session, model_id, "S12", current_week)
+        null_rates = get_null_rates(session, model_id, "s9", current_week)
         assert isinstance(null_rates, dict)
-        # S12 debe tener null rate alto en historial_pagos (anomalía semana 18-20)
-        if "historial_pagos" in null_rates:
-            assert null_rates["historial_pagos"] > 0.05, (
-                f"S12 historial_pagos null rate esperado > 5%, "
-                f"obtenido: {null_rates['historial_pagos']:.2%}"
+        # s9 debe tener null rate alto en meses_en_buro (anomalía semana 18-20)
+        if "meses_en_buro" in null_rates:
+            assert null_rates["meses_en_buro"] > 0.05, (
+                f"s9 meses_en_buro null rate esperado > 5%, "
+                f"obtenido: {null_rates['meses_en_buro']:.2%}"
             )

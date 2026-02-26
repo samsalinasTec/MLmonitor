@@ -12,25 +12,18 @@ class Settings(BaseSettings):
     # Database
     db_url: str = "sqlite:///mlmonitor_dev.db"
 
-    # LLM
-    llm_provider: str = "vertex"
-
-    # Google Cloud (Vertex AI / Gemini)
-    google_cloud_project: str = ""
-    google_cloud_location: str = "us-central1"
-    google_cloud_model: str = "gemini-2.5-flash"
-
-    # AWS Bedrock
+    # AWS (región compartida para Bedrock, S3 y SES)
     aws_region: str = "us-east-1"
     bedrock_model_id: str = "anthropic.claude-3-sonnet-20240229-v1:0"
 
-    # Email
-    smtp_host: str = "smtp.gmail.com"
-    smtp_port: int = 587
-    smtp_user: str = ""
-    smtp_password: str = ""
-    email_recipients: str = ""
+    # S3 — vacío = upload deshabilitado
+    s3_bucket: str = ""
+    s3_prefix: str = "mlmonitor/reports"
+
+    # SES
+    ses_from_email: str = ""
     email_from: str = "MLMonitor <noreply@mlmonitor.local>"
+    email_recipients: str = ""
 
     # Artifacts
     artifacts_dir: str = "artifacts"

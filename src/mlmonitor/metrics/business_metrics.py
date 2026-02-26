@@ -7,9 +7,11 @@ Reglas de ordenamiento:
 
 check_ordering_violation(): cuenta el número de bins consecutivos donde
 la métrica viola la monotonía esperada.
+
+Tasas se calculan al vuelo: count_event_real / count_total por metric_type.
 """
 
-from datetime import date
+from datetime import date, timedelta
 
 import pandas as pd
 from sqlalchemy.orm import Session
@@ -22,17 +24,23 @@ def get_business_metrics_table(
     model_id: str,
     segment_id: str,
     reference_week: date,
+    lag_weeks: int = 8,
 ) -> pd.DataFrame:
     """
     Retorna tabla de métricas de negocio por decil ordenada por score ascendente.
+    reference_week = semana en que se generó el score (date_score_key).
+    date_outcome_key = reference_week + lag_weeks.
     Columnas: score_bin, score_midpoint, count_total, roll_forward_rate, payment_rate
     """
+    outcome_week = reference_week + timedelta(weeks=lag_weeks)
     rows = (
         session.query(FactPerformanceOutcomes)
         .filter(
             FactPerformanceOutcomes.model_id == model_id,
             FactPerformanceOutcomes.segment_id == segment_id,
-            FactPerformanceOutcomes.reference_week == reference_week,
+            FactPerformanceOutcomes.date_score_key == reference_week,
+            FactPerformanceOutcomes.date_outcome_key == outcome_week,
+            FactPerformanceOutcomes.metric_type.in_(["roll_forward", "payment_rate_50"]),
         )
         .order_by(FactPerformanceOutcomes.score_midpoint)
         .all()
@@ -41,17 +49,27 @@ def get_business_metrics_table(
     if not rows:
         return pd.DataFrame()
 
-    data = [
-        {
-            "score_bin": r.score_bin,
-            "score_midpoint": r.score_midpoint or 0,
-            "count_total": r.count_total or 0,
-            "roll_forward_rate": r.roll_forward_rate,
-            "payment_rate": r.payment_rate,
-        }
-        for r in rows
-    ]
-    return pd.DataFrame(data)
+    # Agrupar por score_bin y calcular tasas desde conteos atómicos
+    by_bin: dict[str, dict] = {}
+    for r in rows:
+        key = r.score_bin
+        if key not in by_bin:
+            by_bin[key] = {
+                "score_bin": r.score_bin,
+                "score_midpoint": r.score_midpoint or 0,
+                "count_total": r.count_total or 0,
+                "roll_forward_rate": None,
+                "payment_rate": None,
+            }
+        total = r.count_total or 0
+        rate = (r.count_event_real / total) if total else None
+        if r.metric_type == "roll_forward":
+            by_bin[key]["roll_forward_rate"] = rate
+        elif r.metric_type == "payment_rate_50":
+            by_bin[key]["payment_rate"] = rate
+
+    data = list(by_bin.values())
+    return pd.DataFrame(data).sort_values("score_midpoint").reset_index(drop=True)
 
 
 def check_ordering_violations(

@@ -67,34 +67,34 @@ class TestCheckOrderingViolations:
         assert "value_high_score_bin" in pair
 
 
-class TestG4Violations:
-    def test_g4_roll_forward_violations_weeks_7_8(self, session, model_id):
-        """G4 debe tener violaciones de RollForward en semanas 7-8 (anomalía inyectada)."""
+class TestS4Violations:
+    def test_s4_roll_forward_violations_weeks_7_8(self, session, model_id):
+        """s4 debe tener violaciones de ordering en semanas 7-8 (anomalía inyectada)."""
         from mlmonitor.data.dummy_generator import _week_date
 
         for week in [7, 8]:
             week_date = _week_date(week)
-            result = get_roll_forward_violations(session, model_id, "G4", week_date)
+            result = get_roll_forward_violations(session, model_id, "s4", week_date)
             assert result["violations"] >= 1, (
-                f"G4 semana {week}: esperadas >= 1 violaciones, "
+                f"s4 semana {week}: esperadas >= 1 violaciones, "
                 f"obtenidas: {result['violations']}"
             )
 
-    def test_g4_normal_weeks_no_violations(self, session, model_id):
-        """G4 en semanas sin anomalías debe tener 0 violaciones (o pocas)."""
+    def test_s4_normal_weeks_no_violations(self, session, model_id):
+        """s4 en semanas sin anomalías debe tener 0 violaciones (o pocas)."""
         from mlmonitor.data.dummy_generator import _week_date
         week3 = _week_date(3)
-        result = get_roll_forward_violations(session, model_id, "G4", week3)
+        result = get_roll_forward_violations(session, model_id, "s4", week3)
         # En semanas sin anomalías el ordering debería respetarse
         assert result["violations"] <= 1, (
-            f"G4 semana 3: demasiadas violaciones inesperadas: {result['violations']}"
+            f"s4 semana 3: demasiadas violaciones inesperadas: {result['violations']}"
         )
 
 
 class TestBusinessMetricsTable:
     def test_returns_dataframe(self, session, model_id, performance_week):
         """get_business_metrics_table retorna DataFrame válido."""
-        df = get_business_metrics_table(session, model_id, "G1", performance_week)
+        df = get_business_metrics_table(session, model_id, "s1", performance_week)
         assert not df.empty
         assert "score_bin" in df.columns
         assert "roll_forward_rate" in df.columns
@@ -102,17 +102,17 @@ class TestBusinessMetricsTable:
 
     def test_10_bins(self, session, model_id, performance_week):
         """Deben existir exactamente 10 bins de score."""
-        df = get_business_metrics_table(session, model_id, "G1", performance_week)
+        df = get_business_metrics_table(session, model_id, "s1", performance_week)
         assert len(df) == 10, f"Esperados 10 bins, obtenidos: {len(df)}"
 
     def test_roll_forward_values_in_range(self, session, model_id, performance_week):
-        """RollForward debe estar entre 0 y 1."""
-        df = get_business_metrics_table(session, model_id, "G2", performance_week)
+        """Tasa de deterioro debe estar entre 0 y 1."""
+        df = get_business_metrics_table(session, model_id, "s2", performance_week)
         if not df.empty:
             assert (df["roll_forward_rate"].between(0, 1)).all()
 
     def test_payment_rate_values_in_range(self, session, model_id, performance_week):
-        """PaymentRate debe estar entre 0 y 1."""
-        df = get_business_metrics_table(session, model_id, "G2", performance_week)
+        """Tasa de pago debe estar entre 0 y 1."""
+        df = get_business_metrics_table(session, model_id, "s2", performance_week)
         if not df.empty:
             assert (df["payment_rate"].between(0, 1)).all()

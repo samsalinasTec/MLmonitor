@@ -37,28 +37,28 @@ class TestMetricsCalculator:
         )
         assert db_rows > 0
 
-    def test_g3_psi_critical_alert(self, session, model_id):
-        """G3 debe generar alerta CRITICAL por PSI en semana 20."""
+    def test_s3_psi_critical_alert(self, session, model_id):
+        """s3 debe generar alerta CRITICAL por PSI en semana 20 (nivel_endeudamiento)."""
         week20 = _week_date(20)
         calc = MetricsCalculator(session)
         calc.run_for_model(model_id, week20)
 
-        metrics = calc.get_current_metrics_for_segment(model_id, "G3", week20)
+        metrics = calc.get_current_metrics_for_segment(model_id, "s3", week20)
 
-        # PSI de dias_atraso debe ser CRITICAL
-        psi_row = metrics.get("psi_dias_atraso") or metrics.get("psi_max")
-        assert psi_row is not None, "No se encontró métrica PSI para G3"
+        # PSI de nivel_endeudamiento debe ser CRITICAL
+        psi_row = metrics.get("psi_nivel_endeudamiento") or metrics.get("psi_max")
+        assert psi_row is not None, "No se encontró métrica PSI para s3"
         assert psi_row["alert_flag"] >= 2 or (
-            metrics.get("psi_dias_atraso", {}).get("alert_flag", 0) >= 2
-        ), f"G3 PSI debe ser CRITICAL, obtenido: {psi_row}"
+            metrics.get("psi_nivel_endeudamiento", {}).get("alert_flag", 0) >= 2
+        ), f"s3 PSI debe ser CRITICAL, obtenido: {psi_row}"
 
-    def test_s12_null_rate_alert(self, session, model_id):
-        """S12 debe generar alerta por null_rate alto en semana 20."""
+    def test_s9_null_rate_alert(self, session, model_id):
+        """s9 debe generar alerta por null_rate alto en semana 20 (meses_en_buro)."""
         week20 = _week_date(20)
         calc = MetricsCalculator(session)
         calc.run_for_model(model_id, week20)
 
-        metrics = calc.get_current_metrics_for_segment(model_id, "S12", week20)
+        metrics = calc.get_current_metrics_for_segment(model_id, "s9", week20)
 
         # Debe haber alguna alerta de null_rate
         null_alerts = {
@@ -66,31 +66,31 @@ class TestMetricsCalculator:
             if k.startswith("null_rate_") and v.get("alert_flag", 0) > 0
         }
         assert len(null_alerts) > 0, (
-            f"S12 semana 20 debe tener alertas de null_rate. "
+            f"s9 semana 20 debe tener alertas de null_rate. "
             f"Métricas: {list(metrics.keys())}"
         )
 
-    def test_g4_ordering_violation_alert(self, session, model_id):
-        """G4 debe generar alerta por violaciones de ordering en semana 8."""
+    def test_s4_ordering_violation_alert(self, session, model_id):
+        """s4 debe generar alerta por violaciones de ordering en semana 8."""
         week16 = _week_date(16)  # current_week que tiene performance_week=8
         calc = MetricsCalculator(session)
         calc.run_for_model(model_id, week16)
 
-        metrics = calc.get_current_metrics_for_segment(model_id, "G4", week16)
+        metrics = calc.get_current_metrics_for_segment(model_id, "s4", week16)
 
         rf_metric = metrics.get("roll_forward_ordering_violations")
         if rf_metric is not None:
             assert rf_metric["value"] >= 1, (
-                f"G4 semana 16 (perf_week=8) debe tener >= 1 violación, "
+                f"s4 semana 16 (perf_week=8) debe tener >= 1 violación, "
                 f"obtenido: {rf_metric['value']}"
             )
 
     def test_all_segments_have_metrics(self, session, model_id, current_week):
-        """Todos los 9 segmentos deben tener métricas calculadas."""
+        """Todos los 11 segmentos (s1-s11) deben tener métricas calculadas."""
         calc = MetricsCalculator(session)
         calc.run_for_model(model_id, current_week)
 
-        segments = ["G1", "G2", "G3", "G4", "S1", "S3", "S6", "S9", "S12"]
+        segments = [f"s{i}" for i in range(1, 12)]
         for seg_id in segments:
             metrics = calc.get_current_metrics_for_segment(
                 model_id, seg_id, current_week

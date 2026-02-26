@@ -1,10 +1,11 @@
 """
-PipelineOrchestrator — Ejecuta los 4 pasos del pipeline completo.
+PipelineOrchestrator — Ejecuta los pasos del pipeline completo.
 
 Step 1: MetricsCalculator.run_for_model()  → popula FACT_METRICS_HISTORY
-Step 2: ReportBuilder.build()              → consulta DB + llama LLM
+Step 2: ReportBuilder.build()              → consulta DB + llama LLM (Bedrock)
 Step 3: PDFRenderer.render_pdf()           → genera archivo PDF
-Step 4: EmailSender.send_report()          → envía correo con adjunto
+Step 3b: S3Uploader.upload()               → sube PDF a S3 (si S3_BUCKET configurado)
+Step 4: SESEmailSender.send_report()       → envía correo via SES
 """
 
 from datetime import date
@@ -15,12 +16,12 @@ from sqlalchemy.engine import Engine
 from mlmonitor.analyst.base import AnalysisContext, AnalysisResult
 from mlmonitor.db.models import Base
 from mlmonitor.db.session import get_session
-from mlmonitor.email.sender import EmailSender
+from mlmonitor.email.sender import SESEmailSender
 from mlmonitor.metrics.calculator import MetricsCalculator
 from mlmonitor.report.builder import ReportBuilder
 from mlmonitor.report.renderer import PDFRenderer
 
-MODEL_ID = "SCORECARD_CREDITO_COBRANZA_V1"
+MODEL_ID = "BAZBOOST_V1"
 
 
 class PipelineOrchestrator:
@@ -122,23 +123,39 @@ class PipelineOrchestrator:
         print(f"         ✓ Reporte guardado: {pdf_path}")
 
         # ----------------------------------------------------------------
-        # Step 4: Enviar por email
+        # Step 3b: Subir PDF a S3 (opcional — solo si S3_BUCKET configurado)
+        # ----------------------------------------------------------------
+        s3_uri = None
+        from config.settings import settings as _s
+        if _s.s3_bucket:
+            print("\n[Step 3b] Subiendo PDF a S3...")
+            try:
+                from mlmonitor.storage.s3_uploader import S3Uploader
+                s3_uri = S3Uploader.from_settings().upload(pdf_path)
+                results["steps"]["s3_upload"] = {"status": "ok", "uri": s3_uri}
+            except Exception as e:
+                results["steps"]["s3_upload"] = {"status": "error", "error": str(e)}
+                print(f"         ✗ Error subiendo a S3: {e}")
+        else:
+            results["steps"]["s3_upload"] = {"status": "skipped"}
+
+        # ----------------------------------------------------------------
+        # Step 4: Enviar por email via SES
         # ----------------------------------------------------------------
         if send_email:
-            print("\n[Step 4] Enviando reporte por email...")
+            print("\n[Step 4] Enviando reporte por email (SES)...")
             try:
-                from config.settings import settings
-                email_sender = EmailSender.from_settings()
+                email_sender = SESEmailSender.from_settings()
                 success = email_sender.send_report(
-                    recipients=settings.recipient_list,
+                    recipients=_s.recipient_list,
                     pdf_path=pdf_path,
                 )
                 results["steps"]["email"] = {
                     "status": "ok" if success else "no_recipients",
-                    "recipients": settings.recipient_list,
+                    "recipients": _s.recipient_list,
                 }
                 if success:
-                    print(f"         ✓ Email enviado a {len(settings.recipient_list)} destinatarios")
+                    print(f"         ✓ Email enviado a {len(_s.recipient_list)} destinatarios")
             except Exception as e:
                 results["steps"]["email"] = {"status": "error", "error": str(e)}
                 print(f"         ✗ Error enviando email: {e}")
@@ -156,9 +173,12 @@ class PipelineOrchestrator:
             f"Estado de flota: {fleet['total']} segmentos — "
             f"{fleet['ok']} OK | {fleet['warning']} WARNING | {fleet['critical']} CRITICAL"
         )
-        print(f"Reporte: {pdf_path}")
+        print(f"Reporte local: {pdf_path}")
+        if s3_uri:
+            print(f"Reporte S3:    {s3_uri}")
         print(f"{'='*60}\n")
 
         results["pdf_path"] = str(pdf_path)
+        results["s3_uri"] = s3_uri
         results["fleet_summary"] = context.fleet_summary
         return results

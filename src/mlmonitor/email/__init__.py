@@ -1,3 +1,3 @@
-from .sender import EmailSender
+from .sender import SESEmailSender
 
-__all__ = ["EmailSender"]
+__all__ = ["SESEmailSender"]

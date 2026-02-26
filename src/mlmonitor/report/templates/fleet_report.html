@@ -16,13 +16,14 @@
 <div class="cover-page">
     <div class="cover-logo">MLMonitor</div>
     <div class="cover-title">Reporte de Monitoreo<br>de Flota de Scorecards</div>
-    <div class="cover-subtitle">{{ context.model_name }}</div>
+    <div class="cover-subtitle">Crédito — {{ context.model_name }}</div>
     <div class="cover-meta">
         <p><strong>Modelo:</strong> {{ context.model_id }}</p>
+        <p><strong>Variable objetivo:</strong> 26_42</p>
         <p><strong>Fecha de generación:</strong> {{ generation_date }}</p>
         <p><strong>Semana de cálculo:</strong> {{ context.calculation_week }}</p>
         <p><strong>Límite de datos de performance:</strong> {{ context.performance_week }} (lag estructural: {{ context.lag_semanas }} semanas)</p>
-        <p><strong>Sub-scorecards monitoreados:</strong> {{ context.fleet_summary.total }}</p>
+        <p><strong>Sub-scorecards monitoreados:</strong> {{ context.fleet_summary.total }} de {{ context.total_submodels }}</p>
     </div>
 </div>
 
@@ -108,7 +109,7 @@
     <h1>Ranking de Urgencia — Todos los Segmentos</h1>
     <p style="font-size:9pt; color:#666; margin-bottom:0.4cm;">
         Ordenado por nivel de urgencia: CRÍTICO → WARNING → OK.
-        Los valores de performance (Gini, KS, RollForward) corresponden a la semana {{ context.performance_week }} (lag {{ context.lag_semanas }}s).
+        Los valores de performance (Gini, KS, Tasa de Incumplimiento) corresponden a la semana {{ context.performance_week }} (lag {{ context.lag_semanas }}s).
     </p>
     <table class="ranking-table">
         <thead>
@@ -120,7 +121,7 @@
                 <th>PSI Max</th>
                 <th>Gini</th>
                 <th>KS</th>
-                <th>RF Violations</th>
+                <th>Viol. Incumplimiento</th>
             </tr>
         </thead>
         <tbody>
@@ -141,7 +142,7 @@
 
     <div class="footer-note">
         <p>Este reporte fue generado automáticamente por <strong>MLMonitor v0.1.0</strong>.</p>
-        <p>Las métricas de performance (Gini, KS, RollForward, PaymentRate) tienen un lag estructural de <strong>{{ context.lag_semanas }} semanas</strong>.</p>
+        <p>Las métricas de performance (Gini, KS, Tasa de Incumplimiento, Tasa de Cumplimiento) tienen un lag estructural de <strong>{{ context.lag_semanas }} semanas</strong>.</p>
         <p>Generado el: {{ generation_date }} | Modelo: {{ context.model_id }}</p>
     </div>
 </div>

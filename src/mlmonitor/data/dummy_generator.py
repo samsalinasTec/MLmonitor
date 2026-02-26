@@ -1,17 +1,18 @@
 """
-DummyDataGenerator — Popula las 6 tablas con data de prueba realista.
+DummyDataGenerator — Popula las 6 tablas con data de prueba para CRÉDITO (originación).
 
+Caso: BazBoost / modelo de score de crédito con 11 segmentos (s1–s11).
 Timeline (referencia: 2026-02-16):
 - Semana 0  (2025-08-18): reference_flag=True, baseline de entrenamiento
 - Semanas 1-8  (sep-oct 2025): distribuciones + outcomes (ya pasaron 8 semanas)
 - Semanas 9-20 (oct 2025 - ene 2026): solo distribuciones, sin outcomes aún
 
 Anomalías inyectadas:
-- G3: PSI dias_atraso = 0.25+ CRITICAL (semanas 17-20)
-- S3: PSI saldo_deuda = 0.14  WARNING  (semanas 15-20)
-- G4: Ordering violation RollForward (semanas 7-8)
-- G1: Gini cae 0.45 → 0.28 gradualmente (semanas 1-8)
-- S12: null_count alto en historial_pagos (semanas 18-20)
+- s3: PSI nivel_endeudamiento = 0.25+ CRITICAL (semanas 17-20)
+- s5: PSI capacidad_pago = 0.14  WARNING  (semanas 15-20)
+- s4: Ordering violation (semanas 7-8)
+- s1: Gini cae 0.45 → 0.28 gradualmente (semanas 1-8)
+- s9: null_count alto en meses_en_buro (semanas 18-20)
 """
 
 import math
@@ -29,37 +30,40 @@ from mlmonitor.db.models import (
     MetaVariables,
 )
 
-MODEL_ID = "SCORECARD_CREDITO_COBRANZA_V1"
+MODEL_ID = "BAZBOOST_V1"
 
+# 11 segmentos del modelo de crédito (originación)
 SEGMENTS = {
-    "G1": "Clientes nuevos",
-    "G2": "Vigentes atraso_0",
-    "G3": "Atraso 1-2 semanas",
-    "G4": "Atraso 3-6 semanas",
-    "S1": "Prepago",
-    "S3": "Atraso 3 meses",
-    "S6": "Atraso 6 meses",
-    "S9": "Atraso 9 meses",
-    "S12": "Atraso 12 meses+",
+    "s1": "No file - sin historial crediticio",
+    "s2": "In file < 6 meses",
+    "s3": "In file >= 6 meses",
+    "s4": "Big file - asalariado",
+    "s5": "Big file - capta con Buró",
+    "s6": "Big file - capta sin Buró",
+    "s7": "Asalariado - nómina/portabilidad",
+    "s8": "Capta - con recursos",
+    "s9": "Capta - sin Buró",
+    "s10": "Capta - con Buró",
+    "s11": "Comodín - resto",
 }
 
 VARIABLES = {
     "numeric": [
-        "dias_atraso",
-        "saldo_deuda",
-        "historial_pagos",
-        "utilizacion_credito",
-        "meses_en_cartera",
-        "num_productos",
+        "capacidad_pago",
+        "nivel_endeudamiento",
+        "antiguedad_relacion",
+        "ingresos_declarados",
+        "num_productos_activos",
+        "meses_en_buro",
     ],
     "categorical": [
-        "banda_ingreso",
-        "region",
+        "tipo_ocupacion",
+        "region_geografica",
     ],
 }
 
-BANDA_INGRESO_CATS = ["<5k", "5k-15k", "15k-30k", "30k-60k", ">60k"]
-REGION_CATS = ["Norte", "Noreste", "Centro", "Sur", "Sureste"]
+TIPO_OCUPACION_CATS = ["Empleado", "Independiente", "PyME", "Profesional", "Otro"]
+REGION_GEOGRAFICA_CATS = ["Norte", "Noreste", "Centro", "Sur", "Sureste"]
 
 SCORE_BINS = [
     "0-100", "100-200", "200-300", "300-400", "400-500",
@@ -102,16 +106,17 @@ class DummyDataGenerator:
         for seg_id, seg_desc in SEGMENTS.items():
             rows.append(MetaModelRegistry(
                 model_id=MODEL_ID,
-                model_name="Scorecard Crédito y Cobranza",
+                model_name="BazBoost Crédito",
                 segment_id=seg_id,
                 segment_description=seg_desc,
+                model_type="scorecard",
+                target_definition="Probabilidad de incumplimiento en ventana de 8 semanas",
                 score_min=0,
                 score_max=1000,
                 lag_semanas=8,
                 feature_count=8,
                 training_cutoff_date=date(2025, 7, 31),
-                owner_team="Equipo Analytics Cobranza",
-                is_active=1,
+                owner_team="Equipo Analytics Crédito",
                 valid_from=date(2025, 1, 1),
                 valid_to=None,
             ))
@@ -128,20 +133,26 @@ class DummyDataGenerator:
                     segment_id=seg_id,
                     variable_name=vname,
                     variable_type="numeric",
+                    variable_rol="input",
                     description=f"Variable numérica: {vname}",
                     woe_categories=None,
+                    binning_rules={"type": "quantile", "n_bins": NUM_BINS_NUMERIC},
+                    source_table="MA_B.tbl_variables_credito",
                     valid_from=date(2025, 1, 1),
                     valid_to=None,
                 ))
             for vname in VARIABLES["categorical"]:
-                cats = BANDA_INGRESO_CATS if vname == "banda_ingreso" else REGION_CATS
+                cats = TIPO_OCUPACION_CATS if vname == "tipo_ocupacion" else REGION_GEOGRAFICA_CATS
                 rows.append(MetaVariables(
                     model_id=MODEL_ID,
                     segment_id=seg_id,
                     variable_name=vname,
                     variable_type="categorical",
+                    variable_rol="input",
                     description=f"Variable categórica: {vname}",
                     woe_categories=cats,
+                    binning_rules=None,
+                    source_table="MA_B.tbl_variables_credito",
                     valid_from=date(2025, 1, 1),
                     valid_to=None,
                 ))
@@ -203,8 +214,8 @@ class DummyDataGenerator:
                 for bin_idx in range(NUM_BINS_NUMERIC):
                     bin_label = f"bin_{bin_idx + 1}"
                     null_count = 0
-                    # S12: alto null_count en historial_pagos semanas 18-20
-                    if seg_id == "S12" and vname == "historial_pagos" and week >= 18:
+                    # s9: alto null_count en meses_en_buro semanas 18-20
+                    if seg_id == "s9" and vname == "meses_en_buro" and week >= 18:
                         null_count = int(total_records * self.rng.uniform(0.12, 0.18))
 
                     rows.append(FactDistributions(
@@ -222,7 +233,7 @@ class DummyDataGenerator:
 
             # Categóricas
             for vname in VARIABLES["categorical"]:
-                cats = BANDA_INGRESO_CATS if vname == "banda_ingreso" else REGION_CATS
+                cats = TIPO_OCUPACION_CATS if vname == "tipo_ocupacion" else REGION_GEOGRAFICA_CATS
                 base_probs = [1.0 / len(cats)] * len(cats)
                 probs = self._apply_cat_drift(base_probs, vname, seg_id, week)
                 counts = self._probs_to_counts(probs, total_records)
@@ -258,18 +269,18 @@ class DummyDataGenerator:
         """Aplica drift según las anomalías definidas."""
         probs = list(base_probs)
 
-        # G3: drift CRÍTICO en dias_atraso semanas 17-20
-        if seg_id == "G3" and vname == "dias_atraso" and week >= 17:
+        # s3: drift CRÍTICO en nivel_endeudamiento semanas 17-20
+        if seg_id == "s3" and vname == "nivel_endeudamiento" and week >= 17:
             drift_factor = min(1.0, (week - 16) * 0.25)
-            # Concentrar en bins altos (más días de atraso)
+            # Concentrar en bins altos
             for i in range(NUM_BINS_NUMERIC):
                 if i >= 7:
                     probs[i] = base_probs[i] * (1 + drift_factor * 3.0)
                 else:
                     probs[i] = base_probs[i] * max(0.1, 1 - drift_factor * 0.8)
 
-        # S3: drift WARNING en saldo_deuda semanas 15-20
-        elif seg_id == "S3" and vname == "saldo_deuda" and week >= 15:
+        # s5: drift WARNING en capacidad_pago semanas 15-20
+        elif seg_id == "s5" and vname == "capacidad_pago" and week >= 15:
             drift_factor = min(1.0, (week - 14) * 0.20)
             for i in range(NUM_BINS_NUMERIC):
                 if i >= 6:
@@ -309,7 +320,8 @@ class DummyDataGenerator:
         return total
 
     def _insert_performance_outcomes(self, week: int) -> int:
-        ref_week = _week_date(week)
+        date_score_key = _week_date(week)
+        date_outcome_key = date_score_key + timedelta(weeks=8)
         rows = []
 
         for seg_id in SEGMENTS:
@@ -317,22 +329,35 @@ class DummyDataGenerator:
                 zip(SCORE_BINS, SCORE_MIDPOINTS)
             ):
                 count_total = self.rng.randint(200, 1200)
-                event_rate = self._get_event_rate(seg_id, bin_idx, week)
-                count_event = int(count_total * event_rate)
-
                 roll_fwd = self._get_roll_forward(seg_id, bin_idx, week)
                 pay_rate = self._get_payment_rate(seg_id, bin_idx, week)
+                count_roll_fwd = int(count_total * roll_fwd)
+                count_payment = int(count_total * pay_rate)
+                sum_predicted_score = count_total * midpoint  # aproximación
 
                 rows.append(FactPerformanceOutcomes(
                     model_id=MODEL_ID,
                     segment_id=seg_id,
-                    reference_week=ref_week,
+                    date_score_key=date_score_key,
+                    date_outcome_key=date_outcome_key,
+                    metric_type="roll_forward",
                     score_bin=score_bin,
                     score_midpoint=midpoint,
                     count_total=count_total,
-                    count_event_real=count_event,
-                    roll_forward_rate=round(roll_fwd, 4),
-                    payment_rate=round(pay_rate, 4),
+                    count_event_real=count_roll_fwd,
+                    sum_predicted_score=float(sum_predicted_score),
+                ))
+                rows.append(FactPerformanceOutcomes(
+                    model_id=MODEL_ID,
+                    segment_id=seg_id,
+                    date_score_key=date_score_key,
+                    date_outcome_key=date_outcome_key,
+                    metric_type="payment_rate_50",
+                    score_bin=score_bin,
+                    score_midpoint=midpoint,
+                    count_total=count_total,
+                    count_event_real=count_payment,
+                    sum_predicted_score=float(sum_predicted_score),
                 ))
 
         self.session.add_all(rows)
@@ -341,14 +366,14 @@ class DummyDataGenerator:
 
     def _get_event_rate(self, seg_id: str, bin_idx: int, week: int) -> float:
         """
-        Tasa de evento por bin. Score bajo (bin 0) = alto riesgo.
-        G1: Gini cae gradualmente (distribuciones menos separadas).
+        Tasa de evento por bin (incumplimiento). Score bajo (bin 0) = alto riesgo.
+        s1: Gini cae gradualmente (distribuciones menos separadas).
         """
         # Base: probabilidad decrece conforme sube el score
         base_high_risk = 0.80  # bin 0 (score 0-100)
         base_low_risk = 0.05   # bin 9 (score 900-1000)
 
-        if seg_id == "G1":
+        if seg_id == "s1":
             # Gini cae de 0.45 → 0.28: las distribuciones se acercan
             gini_factor = 1 - (week - 1) * 0.021  # gradual decay
             base_high_risk = 0.80 * gini_factor + 0.50 * (1 - gini_factor)
@@ -360,14 +385,14 @@ class DummyDataGenerator:
 
     def _get_roll_forward(self, seg_id: str, bin_idx: int, week: int) -> float:
         """
-        RollForward: debe DECRECER conforme sube el score.
-        G4: ordering violation en semanas 7-8 (bins 3 y 4 invertidos).
+        Tasa de deterioro (debe DECRECER conforme sube el score).
+        s4: ordering violation en semanas 7-8 (bins 3 y 4 invertidos).
         """
         base = 0.65 - bin_idx * 0.06
         base = max(0.03, min(0.85, base))
 
-        # G4: inversión entre bins 3 y 4 en semanas 7-8
-        if seg_id == "G4" and week >= 7:
+        # s4: inversión entre bins 3 y 4 en semanas 7-8
+        if seg_id == "s4" and week >= 7:
             if bin_idx == 3:
                 base = 0.65 - 4 * 0.06  # valor del bin 4 (más bajo)
             elif bin_idx == 4:

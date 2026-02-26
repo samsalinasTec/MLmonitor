@@ -1,7 +1,7 @@
 [tool.poetry]
 name = "mlmonitor"
 version = "0.1.0"
-description = "Monitoreo automatizado para modelos de scoring de crédito y cobranza"
+description = "Monitoreo automatizado para modelos de scoring de crédito"
 authors = ["Equipo Analytics <analytics@mlmonitor.local>"]
 packages = [{ include = "mlmonitor", from = "src" }]
 
@@ -13,16 +13,15 @@ numpy = "^1.26"
 jinja2 = "^3.1"
 weasyprint = "60.2"
 pydyf = "0.8.0"
-google-cloud-aiplatform = { version = "^1.60", optional = true }
 pydantic-settings = "^2.0"
 python-dotenv = "^1.0"
 scipy = "^1.12"
-google-genai = "^1.64.0"
+ipykernel = "^7.2.0"
+boto3 = "^1.34"
+psycopg2-binary = "^2.9"
 
 [tool.poetry.extras]
-vertex = ["google-cloud-aiplatform"]
 oracle = ["python-oracledb"]
-aws = ["boto3"]
 
 [tool.poetry.group.dev.dependencies]
 pytest = "^8.0"

@@ -1,10 +1,10 @@
 """
 Templates Jinja2 para prompts del analista LLM.
-En español, dominio-específico de scoring de crédito y cobranza.
+En español, dominio-específico de scoring de crédito.
 
 Restricciones:
 - NO mencionar F1, precision, recall, AUC binario
-- SÍ usar Gini, KS, RollForward, PaymentRate
+- SÍ usar Gini, KS, Tasa de Incumplimiento, Tasa de Cumplimiento
 - SIEMPRE mencionar el lag de 8 semanas al hablar de performance
 - Salida con prioridades: [CRÍTICO/ALTA/MEDIA/MONITOREO]
 """
@@ -12,7 +12,7 @@ Restricciones:
 from jinja2 import Environment, BaseLoader
 
 FLEET_SUMMARY_TEMPLATE = """\
-Eres un analista experto en modelos de scoring de crédito y cobranza para cartera de México.
+Eres un analista experto en modelos de scoring de crédito para cartera de México.
 Analiza el siguiente reporte de monitoreo de flota de scorecards y genera un resumen ejecutivo en español.
 
 ## MODELO
@@ -33,8 +33,8 @@ Analiza el siguiente reporte de monitoreo de flota de scorecards y genera un res
 {% if seg.psi_max is not none %}- PSI máximo: {{ "%.3f"|format(seg.psi_max) }} en variable '{{ seg.psi_max_variable }}'{% endif %}
 {% if seg.gini is not none %}- Gini: {{ "%.3f"|format(seg.gini) }} (datos con {{ lag_semanas }} semanas de lag){% endif %}
 {% if seg.ks is not none %}- KS: {{ "%.3f"|format(seg.ks) }}{% endif %}
-{% if seg.roll_forward_violations > 0 %}- RollForward: {{ seg.roll_forward_violations }} violaciones de ordenamiento{% endif %}
-{% if seg.payment_rate_violations > 0 %}- PaymentRate: {{ seg.payment_rate_violations }} violaciones de ordenamiento{% endif %}
+{% if seg.roll_forward_violations > 0 %}- Tasa de Incumplimiento: {{ seg.roll_forward_violations }} violaciones de ordenamiento{% endif %}
+{% if seg.payment_rate_violations > 0 %}- Tasa de Cumplimiento: {{ seg.payment_rate_violations }} violaciones de ordenamiento{% endif %}
 {% for alert in seg.null_rate_alerts %}- Tasa de nulos [{{ alert.label }}] en '{{ alert.variable }}': {{ "%.1f"|format(alert.rate * 100) }}%{% endfor %}
 {% endfor %}
 
@@ -47,20 +47,20 @@ Genera un párrafo ejecutivo de 4-6 oraciones que:
 
 IMPORTANTE:
 - NO menciones F1-score, precision, recall ni AUC binario
-- USA los términos: Gini, KS, PSI, RollForward, PaymentRate
+- USA los términos: Gini, KS, PSI, Tasa de Incumplimiento, Tasa de Cumplimiento
 - Escribe en español técnico para un equipo de analytics
 
 Responde ÚNICAMENTE con el párrafo ejecutivo, sin encabezados adicionales.
 """
 
 SEGMENT_ANALYSIS_TEMPLATE = """\
-Eres un analista experto en modelos de scoring de crédito y cobranza para cartera de México.
+Eres un analista experto en modelos de scoring de crédito para cartera de México.
 Analiza el siguiente segmento y genera un análisis detallado en español.
 
 ## CONTEXTO GENERAL
 - Modelo: {{ model_id }} — {{ model_name }}
 - Semana de cálculo: {{ calculation_week }}
-- Las métricas de performance (Gini, KS, RollForward) tienen un lag estructural de {{ lag_semanas }} semanas
+- Las métricas de performance (Gini, KS, Tasa de Incumplimiento) tienen un lag estructural de {{ lag_semanas }} semanas
 - Semana de performance efectiva: {{ performance_week }}
 
 ## SEGMENTO: {{ segment_id }} — {{ segment_description }}
@@ -74,12 +74,12 @@ Analiza el siguiente segmento y genera un análisis detallado en español.
 ### Métricas de performance (con {{ lag_semanas }} semanas de lag)
 {% if gini is not none %}- Gini: {{ "%.3f"|format(gini) }} (capacidad discriminativa del modelo){% endif %}
 {% if ks is not none %}- KS: {{ "%.3f"|format(ks) }} (separación máxima de distribuciones){% endif %}
-{% if roll_forward_violations > 0 %}- RollForward ordering violations: {{ roll_forward_violations }} bin(s) consecutivos violando el orden esperado (score bajo = mayor deterioro){% endif %}
-{% if payment_rate_violations > 0 %}- PaymentRate ordering violations: {{ payment_rate_violations }} bin(s) consecutivos violando el orden esperado (score alto = mayor pago){% endif %}
+{% if roll_forward_violations > 0 %}- Tasa de Incumplimiento: {{ roll_forward_violations }} violación(es) de ordenamiento (score bajo = mayor incumplimiento){% endif %}
+{% if payment_rate_violations > 0 %}- Tasa de Cumplimiento: {{ payment_rate_violations }} violación(es) de ordenamiento (score alto = mayor cumplimiento){% endif %}
 
 ### Tabla de negocio por decil (score ascendente = menor riesgo)
-| Score Bin | RollForward | PaymentRate |
-|-----------|-------------|-------------|
+| Score Bin | Tasa Incumplimiento | Tasa Cumplimiento |
+|-----------|---------------------|-------------------|
 {% for row in business_table %}| {{ row.score_bin }} | {{ "%.1f"|format((row.roll_forward_rate or 0) * 100) }}% | {{ "%.1f"|format((row.payment_rate or 0) * 100) }}% |
 {% endfor %}
 
@@ -91,7 +91,7 @@ Genera:
 
 **ANÁLISIS** (3-4 oraciones):
 Describe el estado del segmento, las causas probables de las alertas y el impacto en el negocio.
-Menciona el lag de {{ lag_semanas }} semanas si hablas de Gini/KS/RollForward.
+Menciona el lag de {{ lag_semanas }} semanas si hablas de Gini/KS/Tasa de Incumplimiento.
 
 **ACCIONES RECOMENDADAS** (3-5 acciones, formato JSON):
 ```json
@@ -106,7 +106,7 @@ Menciona el lag de {{ lag_semanas }} semanas si hablas de Gini/KS/RollForward.
 
 IMPORTANTE:
 - NO menciones F1-score, precision, recall ni AUC binario
-- USA los términos: Gini, KS, PSI, RollForward, PaymentRate
+- USA los términos: Gini, KS, PSI, Tasa de Incumplimiento, Tasa de Cumplimiento
 - Las acciones deben ser concretas y accionables
 - Si hay violaciones de ordering, menciona qué bins están involucrados
 """

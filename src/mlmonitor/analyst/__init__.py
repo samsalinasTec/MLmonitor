@@ -1,5 +1,5 @@
 """
-Factory para analistas LLM. Selecciona el proveedor via LLM_PROVIDER.
+Factory para el analista LLM — siempre usa AWS Bedrock.
 """
 
 from mlmonitor.analyst.base import (
@@ -8,51 +8,30 @@ from mlmonitor.analyst.base import (
     BaseAnalyst,
     SegmentMetrics,
 )
+from mlmonitor.analyst.bedrock_analyst import BedrockAnalyst
 
 
-def create_analyst(provider: str | None = None, **kwargs) -> BaseAnalyst:
+def create_analyst(**kwargs) -> BedrockAnalyst:
     """
-    Factory que crea el analista según LLM_PROVIDER.
+    Crea un analista Bedrock con la configuración global.
 
     Args:
-        provider: "vertex" | "bedrock" (default: settings.llm_provider)
-        **kwargs: parámetros específicos del proveedor
+        **kwargs: Sobreescribir region o model_id si es necesario.
 
     Returns:
-        Instancia del analista correspondiente.
+        Instancia de BedrockAnalyst.
     """
-    if provider is None:
-        from config.settings import settings
-        provider = settings.llm_provider
+    from config.settings import settings
 
-    if provider == "vertex":
-        from config.settings import settings
-        from mlmonitor.analyst.vertex_analyst import VertexAIAnalyst
-
-        return VertexAIAnalyst(
-            project=kwargs.get("project", settings.google_cloud_project),
-            location=kwargs.get("location", settings.google_cloud_location),
-            model_name=kwargs.get("model_name", settings.google_cloud_model),
-        )
-
-    elif provider == "bedrock":
-        from config.settings import settings
-        from mlmonitor.analyst.bedrock_analyst import BedrockAnalyst
-
-        return BedrockAnalyst(
-            region=kwargs.get("region", settings.aws_region),
-            model_id=kwargs.get("model_id", settings.bedrock_model_id),
-        )
-
-    else:
-        raise ValueError(
-            f"Proveedor LLM no soportado: '{provider}'. "
-            "Usa 'vertex' o 'bedrock'."
-        )
+    return BedrockAnalyst(
+        region=kwargs.get("region", settings.aws_region),
+        model_id=kwargs.get("model_id", settings.bedrock_model_id),
+    )
 
 
 __all__ = [
     "create_analyst",
+    "BedrockAnalyst",
     "BaseAnalyst",
     "AnalysisContext",
     "AnalysisResult",

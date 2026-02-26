@@ -9,7 +9,7 @@ Gini = 2 × AUC - 1  (regla trapezoidal)
 KS = max diferencia entre distribuciones acumuladas de eventos y no-eventos
 """
 
-from datetime import date
+from datetime import date, timedelta
 
 import numpy as np
 import pandas as pd
@@ -22,7 +22,9 @@ def _build_performance_df(
     session: Session,
     model_id: str,
     segment_id: str,
-    reference_week: date,
+    date_score_key: date,
+    date_outcome_key: date,
+    metric_type: str = "roll_forward",
 ) -> pd.DataFrame:
     """Carga los outcomes de una semana y construye el DataFrame base."""
     rows = (
@@ -30,7 +32,9 @@ def _build_performance_df(
         .filter(
             FactPerformanceOutcomes.model_id == model_id,
             FactPerformanceOutcomes.segment_id == segment_id,
-            FactPerformanceOutcomes.reference_week == reference_week,
+            FactPerformanceOutcomes.date_score_key == date_score_key,
+            FactPerformanceOutcomes.date_outcome_key == date_outcome_key,
+            FactPerformanceOutcomes.metric_type == metric_type,
         )
         .order_by(FactPerformanceOutcomes.score_midpoint)
         .all()
@@ -100,12 +104,20 @@ def get_gini_ks_for_segment(
     model_id: str,
     segment_id: str,
     performance_week: date,
+    lag_weeks: int = 8,
 ) -> dict[str, float]:
     """
     Calcula Gini y KS para un segmento en la semana de performance.
-    performance_week = current_week - 8 semanas (lag estructural).
+    performance_week = date_score_key (semana en que se generó el score).
+    date_outcome_key = performance_week + lag_weeks.
     """
-    df = _build_performance_df(session, model_id, segment_id, performance_week)
+    date_outcome_key = performance_week + timedelta(weeks=lag_weeks)
+    df = _build_performance_df(
+        session, model_id, segment_id,
+        date_score_key=performance_week,
+        date_outcome_key=date_outcome_key,
+        metric_type="roll_forward",
+    )
     if df.empty:
         return {"gini": None, "ks": None, "auc": None}
     return compute_gini_ks(df)

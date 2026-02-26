@@ -49,14 +49,8 @@ def parse_args():
     parser.add_argument(
         "--model-id",
         type=str,
-        default="SCORECARD_CREDITO_COBRANZA_V1",
+        default="BAZBOOST_V1",
         help="ID del modelo a monitorear",
-    )
-    parser.add_argument(
-        "--llm-provider",
-        type=str,
-        default=None,
-        help="Proveedor LLM: vertex | bedrock (default: settings.llm_provider)",
     )
     return parser.parse_args()
 
@@ -77,7 +71,7 @@ def main():
 
     print(f"[run_pipeline] DB: {db_url}")
     print(f"[run_pipeline] Fecha: {calculation_date}")
-    print(f"[run_pipeline] LLM: {'desactivado' if args.no_llm else (args.llm_provider or settings.llm_provider)}")
+    print(f"[run_pipeline] LLM: {'desactivado' if args.no_llm else 'Bedrock'}")
 
     # Crear engine
     from mlmonitor.db.connection import create_db_engine
@@ -88,8 +82,7 @@ def main():
     if not args.no_llm:
         try:
             from mlmonitor.analyst import create_analyst
-            provider = args.llm_provider or settings.llm_provider
-            analyst = create_analyst(provider=provider)
+            analyst = create_analyst()
             print(f"[run_pipeline] Analista LLM: {type(analyst).__name__}")
         except Exception as e:
             print(f"[run_pipeline] Advertencia: no se pudo inicializar el LLM: {e}")

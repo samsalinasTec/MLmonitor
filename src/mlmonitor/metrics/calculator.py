@@ -107,7 +107,6 @@ class MetricsCalculator:
             .filter(
                 MetaModelRegistry.model_id == model_id,
                 MetaModelRegistry.valid_to.is_(None),
-                MetaModelRegistry.is_active == 1,
             )
             .all()
         )

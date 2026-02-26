@@ -7,15 +7,13 @@ Reglas:
 """
 
 import json
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 
 from sqlalchemy import (
-    Boolean,
     Column,
     Date,
     DateTime,
     Float,
-    ForeignKey,
     Integer,
     SmallInteger,
     String,
@@ -56,36 +54,52 @@ class MetaModelRegistry(Base):
     """Registro maestro de modelos. SCD2."""
 
     __tablename__ = "META_MODEL_REGISTRY"
+    __table_args__ = (
+        UniqueConstraint(
+            "model_id", "segment_id", "valid_from",
+            name="uq_meta_model_registry"
+        ),
+    )
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     model_id = Column(String(100), nullable=False, index=True)
     model_name = Column(String(200), nullable=False)
     segment_id = Column(String(20), nullable=False)
     segment_description = Column(String(200))
+    model_type = Column(String(50), nullable=False)  # scorecard, logistic_regression, xgboost, etc.
+    target_definition = Column(String(500))  # qué predice el modelo en lenguaje natural
     score_min = Column(Integer, default=0)
     score_max = Column(Integer, default=1000)
     lag_semanas = Column(Integer, default=8)
     feature_count = Column(Integer)
     training_cutoff_date = Column(Date)
     owner_team = Column(String(100))
-    is_active = Column(SmallInteger, default=1)
     valid_from = Column(Date, nullable=False)
     valid_to = Column(Date, nullable=True)  # NULL = vigente
-    created_at = Column(DateTime, default=datetime.utcnow)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
 
 class MetaVariables(Base):
     """Catálogo de variables por modelo. SCD2."""
 
     __tablename__ = "META_VARIABLES"
+    __table_args__ = (
+        UniqueConstraint(
+            "model_id", "segment_id", "variable_name", "valid_from",
+            name="uq_meta_variables"
+        ),
+    )
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     model_id = Column(String(100), nullable=False, index=True)
     segment_id = Column(String(20), nullable=False, index=True)
     variable_name = Column(String(100), nullable=False)
     variable_type = Column(String(20), nullable=False)  # numeric | categorical
+    variable_rol = Column(String(20), nullable=False, default="input")  # input | output | target
     description = Column(String(300))
     woe_categories = Column(JSONText)  # para categóricas: lista de valores
+    binning_rules = Column(JSONText)  # ej: {"type": "fixed_cuts", "cuts": [0, 201, ...]}
+    source_table = Column(String(200))  # tabla física origen, ej: MA_B.tbl_comportamiento_pagos
     valid_from = Column(Date, nullable=False)
     valid_to = Column(Date, nullable=True)
 
@@ -98,6 +112,7 @@ class MetaMetricThresholds(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     metric_name = Column(String(100), nullable=False)
     model_id_override = Column(String(100), nullable=True)  # NULL = global
+    segment_id = Column(String(20), nullable=True)  # NULL = todos los segmentos
     warning_threshold = Column(Float)
     critical_threshold = Column(Float)
     direction = Column(String(10), default="higher_worse")  # higher_worse | lower_worse
@@ -131,17 +146,19 @@ class FactDistributions(Base):
     bin_count = Column(Integer, default=0)
     bin_percentage = Column(Float)
     null_count = Column(Integer, default=0)
+    sum_value = Column(Float)  # suma de valores en el bin (para media por bin)
     total_records = Column(Integer)
-    loaded_at = Column(DateTime, default=datetime.utcnow)
+    loaded_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
 
 class FactPerformanceOutcomes(Base):
-    """Outcomes de performance por score bin. Solo append."""
+    """Outcomes de performance por score bin. Solo append. Conteos atómicos; tasas se calculan al vuelo."""
 
     __tablename__ = "FACT_PERFORMANCE_OUTCOMES"
     __table_args__ = (
         UniqueConstraint(
-            "model_id", "segment_id", "reference_week", "score_bin",
+            "model_id", "segment_id", "date_score_key", "date_outcome_key",
+            "metric_type", "score_bin",
             name="uq_fact_performance_outcomes"
         ),
     )
@@ -149,14 +166,15 @@ class FactPerformanceOutcomes(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     model_id = Column(String(100), nullable=False, index=True)
     segment_id = Column(String(20), nullable=False, index=True)
-    reference_week = Column(Date, nullable=False, index=True)
+    date_score_key = Column(Date, nullable=False, index=True)  # semana en que se generó el score
+    date_outcome_key = Column(Date, nullable=False, index=True)  # semana en que se observó el outcome (T+lag)
+    metric_type = Column(String(50), nullable=False)  # roll_forward, payment_rate_50, b_malo_8_13, etc.
     score_bin = Column(String(20), nullable=False)  # "0-100", "100-200", ...
     score_midpoint = Column(Integer)
     count_total = Column(Integer, default=0)
     count_event_real = Column(Integer, default=0)  # mora / atraso real
-    roll_forward_rate = Column(Float)  # tasa de deterioro
-    payment_rate = Column(Float)  # tasa de pago
-    loaded_at = Column(DateTime, default=datetime.utcnow)
+    sum_predicted_score = Column(Float)  # para calibración: score promedio = sum/count_total
+    loaded_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
 
 class FactMetricsHistory(Base):
@@ -179,4 +197,5 @@ class FactMetricsHistory(Base):
     alert_flag = Column(SmallInteger, default=0)  # 0=OK, 1=WARNING, 2=CRITICAL
     alert_label = Column(String(20))  # "OK" | "WARNING" | "CRITICAL"
     details = Column(JSONText)  # detalles adicionales por métrica
-    calculated_at = Column(DateTime, default=datetime.utcnow)
+    calculated_from = Column(String(50))  # FACT_DISTRIBUTIONS | FACT_PERFORMANCE_OUTCOMES
+    calculated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))

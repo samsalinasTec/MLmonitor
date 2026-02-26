@@ -97,7 +97,7 @@
             </tr>
             {% endif %}
             <tr class="metric-row">
-                <td>Violaciones RollForward</td>
+                <td>Violaciones Tasa de Incumplimiento</td>
                 <td class="value-{{ 'ok' if seg.roll_forward_violations == 0 else 'warning' if seg.roll_forward_violations < 2 else 'critical' }}">
                     {{ seg.roll_forward_violations }}
                 </td>
@@ -106,10 +106,10 @@
                         {{ 'OK' if seg.roll_forward_violations == 0 else 'WARNING' if seg.roll_forward_violations < 2 else 'CRITICAL' }}
                     </span>
                 </td>
-                <td>Bins con orden incorrecto</td>
+                <td>Deciles con orden incorrecto</td>
             </tr>
             <tr class="metric-row">
-                <td>Violaciones PaymentRate</td>
+                <td>Violaciones Tasa de Cumplimiento</td>
                 <td class="value-{{ 'ok' if seg.payment_rate_violations == 0 else 'warning' if seg.payment_rate_violations < 2 else 'critical' }}">
                     {{ seg.payment_rate_violations }}
                 </td>
@@ -118,7 +118,7 @@
                         {{ 'OK' if seg.payment_rate_violations == 0 else 'WARNING' if seg.payment_rate_violations < 2 else 'CRITICAL' }}
                     </span>
                 </td>
-                <td>Bins con orden incorrecto</td>
+                <td>Deciles con orden incorrecto</td>
             </tr>
         </tbody>
     </table>
@@ -127,7 +127,7 @@
     {% if seg.business_table %}
     <h2>Métricas de Negocio por Decil (lag {{ context.lag_semanas }}s)</h2>
     <p style="font-size:9pt; color:#666; margin-bottom:0.2cm;">
-        Score bajo = mayor riesgo. RollForward debe decrecer; PaymentRate debe crecer conforme sube el score.
+        Score bajo = mayor riesgo. Tasa de Incumplimiento debe decrecer; Tasa de Cumplimiento debe crecer conforme sube el score.
     </p>
     <table>
         <thead>
@@ -135,8 +135,8 @@
                 <th>Score Bin</th>
                 <th>Midpoint</th>
                 <th>Total Clientes</th>
-                <th>RollForward (%)</th>
-                <th>PaymentRate (%)</th>
+                <th>Tasa Incumplimiento (%)</th>
+                <th>Tasa Cumplimiento (%)</th>
             </tr>
         </thead>
         <tbody>

@@ -55,7 +55,6 @@ class ReportBuilder:
             .filter(
                 MetaModelRegistry.model_id == model_id,
                 MetaModelRegistry.valid_to.is_(None),
-                MetaModelRegistry.is_active == 1,
             )
             .all()
         )
@@ -95,6 +94,7 @@ class ReportBuilder:
             lag_semanas=lag_semanas,
             segments=segments,
             fleet_summary=fleet_summary,
+            total_submodels=11,
         )
 
         # Llamada al LLM si hay analista

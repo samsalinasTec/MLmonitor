@@ -50,7 +50,7 @@ def session(populated_engine):
 
 @pytest.fixture
 def model_id():
-    return "SCORECARD_CREDITO_COBRANZA_V1"
+    return "BAZBOOST_V1"
 
 
 @pytest.fixture

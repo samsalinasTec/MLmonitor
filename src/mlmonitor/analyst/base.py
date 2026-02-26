@@ -38,6 +38,7 @@ class AnalysisContext:
     lag_semanas: int
     segments: list[SegmentMetrics]
     fleet_summary: dict[str, Any] = field(default_factory=dict)
+    total_submodels: int = 11  # total de sub-scorecards del modelo (para portada)
     # fleet_summary: {"total": 9, "ok": N, "warning": N, "critical": N}
 
 

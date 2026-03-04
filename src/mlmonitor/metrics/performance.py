@@ -20,8 +20,7 @@ from mlmonitor.db.models import FactPerformanceOutcomes
 
 def _build_performance_df(
     session: Session,
-    model_id: str,
-    segment_id: str,
+    model_registry_id: int,
     date_score_key: date,
     date_outcome_key: date,
     metric_type: str = "roll_forward",
@@ -30,8 +29,7 @@ def _build_performance_df(
     rows = (
         session.query(FactPerformanceOutcomes)
         .filter(
-            FactPerformanceOutcomes.model_id == model_id,
-            FactPerformanceOutcomes.segment_id == segment_id,
+            FactPerformanceOutcomes.model_registry_id == model_registry_id,
             FactPerformanceOutcomes.date_score_key == date_score_key,
             FactPerformanceOutcomes.date_outcome_key == date_outcome_key,
             FactPerformanceOutcomes.metric_type == metric_type,
@@ -101,19 +99,21 @@ def compute_gini_ks(df: pd.DataFrame) -> dict[str, float]:
 
 def get_gini_ks_for_segment(
     session: Session,
-    model_id: str,
-    segment_id: str,
+    model_registry_id: int,
     performance_week: date,
     lag_weeks: int = 8,
 ) -> dict[str, float]:
     """
     Calcula Gini y KS para un segmento en la semana de performance.
-    performance_week = date_score_key (semana en que se generó el score).
-    date_outcome_key = performance_week + lag_weeks.
+
+    Args:
+        model_registry_id: ID surrogado del registro del modelo (segmento)
+        performance_week: date_score_key (semana en que se generó el score)
+        lag_weeks: semanas de lag para el outcome (default 8)
     """
     date_outcome_key = performance_week + timedelta(weeks=lag_weeks)
     df = _build_performance_df(
-        session, model_id, segment_id,
+        session, model_registry_id,
         date_score_key=performance_week,
         date_outcome_key=date_outcome_key,
         metric_type="roll_forward",

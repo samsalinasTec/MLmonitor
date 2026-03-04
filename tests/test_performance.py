@@ -69,30 +69,33 @@ class TestComputeGiniKS:
 
 
 class TestGiniKSFromDB:
-    def test_returns_dict_with_keys(self, session, model_id, performance_week):
+    def test_returns_dict_with_keys(self, session, segment_ids, performance_week):
         """get_gini_ks_for_segment retorna dict con claves gini/ks/auc."""
-        result = get_gini_ks_for_segment(session, model_id, "s2", performance_week)
+        reg_id = segment_ids["s2"]
+        result = get_gini_ks_for_segment(session, reg_id, performance_week)
         assert "gini" in result
         assert "ks" in result
         assert "auc" in result
 
-    def test_gini_in_valid_range(self, session, model_id, performance_week):
+    def test_gini_in_valid_range(self, session, segment_ids, performance_week):
         """Gini debe estar entre -1 y 1."""
         for seg in ["s1", "s2", "s3", "s4", "s5"]:
-            result = get_gini_ks_for_segment(session, model_id, seg, performance_week)
+            reg_id = segment_ids[seg]
+            result = get_gini_ks_for_segment(session, reg_id, performance_week)
             if result["gini"] is not None:
                 assert -1.0 <= result["gini"] <= 1.0, (
                     f"{seg} Gini fuera de rango: {result['gini']}"
                 )
 
-    def test_s1_gini_drops_over_weeks(self, session, model_id):
+    def test_s1_gini_drops_over_weeks(self, session, segment_ids):
         """s1 debe tener Gini más bajo en semana 8 que en semana 1 (anomalía inyectada)."""
         from mlmonitor.data.dummy_generator import _week_date
         week1 = _week_date(1)
         week8 = _week_date(8)
+        reg_id = segment_ids["s1"]
 
-        r1 = get_gini_ks_for_segment(session, model_id, "s1", week1)
-        r8 = get_gini_ks_for_segment(session, model_id, "s1", week8)
+        r1 = get_gini_ks_for_segment(session, reg_id, week1)
+        r8 = get_gini_ks_for_segment(session, reg_id, week8)
 
         if r1["gini"] is not None and r8["gini"] is not None:
             assert r8["gini"] < r1["gini"], (
@@ -100,10 +103,11 @@ class TestGiniKSFromDB:
                 f"que semana1 ({r1['gini']:.4f})"
             )
 
-    def test_missing_week_returns_none(self, session, model_id):
+    def test_missing_week_returns_none(self, session, segment_ids):
         """Semana sin datos retorna None para todas las métricas."""
         from datetime import date
         future_week = date(2030, 1, 1)
-        result = get_gini_ks_for_segment(session, model_id, "s1", future_week)
+        reg_id = segment_ids["s1"]
+        result = get_gini_ks_for_segment(session, reg_id, future_week)
         assert result["gini"] is None
         assert result["ks"] is None

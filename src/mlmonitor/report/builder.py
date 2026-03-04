@@ -16,12 +16,15 @@ from mlmonitor.analyst.base import AnalysisContext, AnalysisResult, SegmentMetri
 from mlmonitor.db.models import (
     FactMetricsHistory,
     FactPerformanceOutcomes,
+    MetaMetricThresholds,
     MetaModelRegistry,
+    MetaVariables,
 )
 from mlmonitor.metrics.business_metrics import get_business_metrics_table
 
 LAG_WEEKS = 8
 STATUS_ORDER = {"CRITICAL": 0, "WARNING": 1, "OK": 2}
+_LABEL_TO_FLAG = {"OK": 0, "WARNING": 1, "CRITICAL": 2}
 
 
 class ReportBuilder:
@@ -49,7 +52,7 @@ class ReportBuilder:
         """
         performance_week = calculation_week - timedelta(weeks=LAG_WEEKS)
 
-        # Obtener metadata del modelo
+        # Obtener metadata del modelo (un registro por segmento/fleet_id)
         model_regs = (
             self.session.query(MetaModelRegistry)
             .filter(
@@ -58,18 +61,37 @@ class ReportBuilder:
             )
             .all()
         )
-        model_name = (
-            model_regs[0].model_name if model_regs else model_id
-        )
+        model_name = model_regs[0].model_name if model_regs else model_id
         lag_semanas = model_regs[0].lag_semanas if model_regs else LAG_WEEKS
+
+        # Cargar mapa de métricas: {metric_id → metric_name}
+        threshold_rows = (
+            self.session.query(MetaMetricThresholds)
+            .filter(MetaMetricThresholds.valid_to.is_(None))
+            .all()
+        )
+        metric_name_map: dict[int, str] = {r.id: r.metric_name for r in threshold_rows}
 
         # Construir SegmentMetrics por segmento
         segments = []
         for reg in model_regs:
+            # Cargar variables del segmento: {var_id: var_name}
+            var_rows = (
+                self.session.query(MetaVariables)
+                .filter(
+                    MetaVariables.model_registry_id == reg.id,
+                    MetaVariables.valid_to.is_(None),
+                )
+                .all()
+            )
+            variable_map = {v.id: v.variable_name for v in var_rows}
+
             seg_metrics = self._build_segment_metrics(
-                model_id=model_id,
-                segment_id=reg.segment_id,
-                segment_description=reg.segment_description or reg.segment_id,
+                model_registry_id=reg.id,
+                segment_id=reg.fleet_id,
+                segment_description=reg.model_description or reg.fleet_id,
+                variable_map=variable_map,
+                metric_name_map=metric_name_map,
                 calculation_week=calculation_week,
                 performance_week=performance_week,
             )
@@ -106,9 +128,11 @@ class ReportBuilder:
 
     def _build_segment_metrics(
         self,
-        model_id: str,
+        model_registry_id: int,
         segment_id: str,
         segment_description: str,
+        variable_map: dict[int, str],
+        metric_name_map: dict[int, str],
         calculation_week: date,
         performance_week: date,
     ) -> SegmentMetrics:
@@ -116,14 +140,34 @@ class ReportBuilder:
         metrics_rows = (
             self.session.query(FactMetricsHistory)
             .filter(
-                FactMetricsHistory.model_id == model_id,
-                FactMetricsHistory.segment_id == segment_id,
+                FactMetricsHistory.model_registry_id == model_registry_id,
                 FactMetricsHistory.calculation_week == calculation_week,
             )
             .all()
         )
 
-        metrics_dict = {r.metric_name: r for r in metrics_rows}
+        # Construir dict de métricas con nombres resueltos
+        # Para PSI y null_rate por variable, se usan claves compuestas
+        metrics_dict: dict[str, FactMetricsHistory] = {}
+        for row in metrics_rows:
+            mname = metric_name_map.get(row.metric_id, f"metric_{row.metric_id}")
+            details = row.details or {}
+
+            if mname == "psi" and details.get("is_max_psi"):
+                key = "psi_max"
+            elif mname == "psi" and row.variable_id is not None:
+                vname = variable_map.get(row.variable_id, str(row.variable_id))
+                key = f"psi_{vname}"
+            elif mname == "null_rate" and row.variable_id is not None:
+                vname = variable_map.get(row.variable_id, str(row.variable_id))
+                key = f"null_rate_{vname}"
+            else:
+                key = mname
+
+            metrics_dict[key] = row
+
+        def _flag(row: FactMetricsHistory) -> int:
+            return _LABEL_TO_FLAG.get(row.alert_label, 0)
 
         # PSI máximo
         psi_max = None
@@ -131,9 +175,7 @@ class ReportBuilder:
         psi_max_row = metrics_dict.get("psi_max")
         if psi_max_row:
             psi_max = psi_max_row.metric_value
-            psi_max_variable = (
-                (psi_max_row.details or {}).get("max_variable", "")
-            )
+            psi_max_variable = (psi_max_row.details or {}).get("max_variable", "")
 
         # Gini / KS
         gini_row = metrics_dict.get("gini")
@@ -151,25 +193,25 @@ class ReportBuilder:
 
         # Null rate alerts
         null_rate_alerts = []
-        for metric_name, row in metrics_dict.items():
-            if metric_name.startswith("null_rate_") and row.alert_flag > 0:
-                vname = metric_name.replace("null_rate_", "", 1)
+        for key, row in metrics_dict.items():
+            if key.startswith("null_rate_") and _flag(row) > 0:
+                vname = key.replace("null_rate_", "", 1)
                 null_rate_alerts.append({
                     "variable": vname,
                     "rate": row.metric_value or 0.0,
                     "label": row.alert_label,
-                    "flag": row.alert_flag,
+                    "flag": _flag(row),
                 })
 
         # Active alerts (todas las métricas con flag > 0)
         active_alerts = []
-        for metric_name, row in metrics_dict.items():
-            if row.alert_flag > 0:
+        for key, row in metrics_dict.items():
+            if _flag(row) > 0:
                 active_alerts.append({
-                    "metric": metric_name,
+                    "metric": key,
                     "value": row.metric_value,
                     "label": row.alert_label,
-                    "flag": row.alert_flag,
+                    "flag": _flag(row),
                     "details": row.details,
                 })
         active_alerts.sort(key=lambda x: -x["flag"])
@@ -184,7 +226,7 @@ class ReportBuilder:
 
         # Business table (con lag)
         business_df = get_business_metrics_table(
-            self.session, model_id, segment_id, performance_week
+            self.session, model_registry_id, performance_week
         )
         business_table = []
         if not business_df.empty:

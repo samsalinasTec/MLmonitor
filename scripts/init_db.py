@@ -51,7 +51,7 @@ def init_db(db_url: str) -> None:
             "FACT_PERFORMANCE_OUTCOMES",
             "FACT_METRICS_HISTORY",
         ]:
-            result = conn.execute(text(f"SELECT COUNT(*) FROM {table_name}"))
+            result = conn.execute(text(f'SELECT COUNT(*) FROM "{table_name}"'))
             count = result.scalar()
             print(f"  {table_name:<35} {count:>6} filas")
 

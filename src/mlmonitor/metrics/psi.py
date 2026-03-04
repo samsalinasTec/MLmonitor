@@ -42,9 +42,8 @@ def compute_psi_from_df(ref_df: pd.DataFrame, cur_df: pd.DataFrame) -> float:
 
 def get_psi_for_variable(
     session: Session,
-    model_id: str,
-    segment_id: str,
-    variable_name: str,
+    model_registry_id: int,
+    variable_id: int,
     current_week: date,
 ) -> float:
     """
@@ -54,9 +53,8 @@ def get_psi_for_variable(
     ref_rows = (
         session.query(FactDistributions)
         .filter(
-            FactDistributions.model_id == model_id,
-            FactDistributions.segment_id == segment_id,
-            FactDistributions.variable_name == variable_name,
+            FactDistributions.model_registry_id == model_registry_id,
+            FactDistributions.variable_id == variable_id,
             FactDistributions.reference_flag == 1,
         )
         .all()
@@ -66,9 +64,8 @@ def get_psi_for_variable(
     cur_rows = (
         session.query(FactDistributions)
         .filter(
-            FactDistributions.model_id == model_id,
-            FactDistributions.segment_id == segment_id,
-            FactDistributions.variable_name == variable_name,
+            FactDistributions.model_registry_id == model_registry_id,
+            FactDistributions.variable_id == variable_id,
             FactDistributions.reference_week == current_week,
             FactDistributions.reference_flag == 0,
         )
@@ -92,28 +89,25 @@ def get_psi_for_variable(
 
 def get_psi_for_all_variables(
     session: Session,
-    model_id: str,
-    segment_id: str,
+    model_registry_id: int,
+    variable_map: dict[int, str],
     current_week: date,
 ) -> dict[str, float]:
-    """Calcula PSI para todas las variables de un segmento. Retorna {var: psi}."""
-    # Obtener lista de variables para este segmento
-    variables = (
-        session.query(FactDistributions.variable_name)
-        .filter(
-            FactDistributions.model_id == model_id,
-            FactDistributions.segment_id == segment_id,
-            FactDistributions.reference_flag == 1,
-        )
-        .distinct()
-        .all()
-    )
-    variable_names = [v[0] for v in variables]
+    """
+    Calcula PSI para todas las variables de un segmento.
 
+    Args:
+        model_registry_id: ID surrogado del registro del modelo (segmento)
+        variable_map: {variable_id: variable_name}
+        current_week: semana de cálculo
+
+    Returns:
+        {variable_name: psi_value}
+    """
     result = {}
-    for vname in variable_names:
-        result[vname] = get_psi_for_variable(
-            session, model_id, segment_id, vname, current_week
+    for var_id, var_name in variable_map.items():
+        result[var_name] = get_psi_for_variable(
+            session, model_registry_id, var_id, current_week
         )
     return result
 
@@ -128,16 +122,25 @@ def get_max_psi(psi_by_variable: dict[str, float]) -> tuple[float, str]:
 
 def get_null_rates(
     session: Session,
-    model_id: str,
-    segment_id: str,
+    model_registry_id: int,
+    variable_map: dict[int, str],
     current_week: date,
 ) -> dict[str, float]:
-    """Calcula la tasa de nulos por variable en la semana actual."""
+    """
+    Calcula la tasa de nulos por variable en la semana actual.
+
+    Args:
+        model_registry_id: ID surrogado del registro del modelo (segmento)
+        variable_map: {variable_id: variable_name}
+        current_week: semana de cálculo
+
+    Returns:
+        {variable_name: null_rate}
+    """
     rows = (
         session.query(FactDistributions)
         .filter(
-            FactDistributions.model_id == model_id,
-            FactDistributions.segment_id == segment_id,
+            FactDistributions.model_registry_id == model_registry_id,
             FactDistributions.reference_week == current_week,
             FactDistributions.reference_flag == 0,
         )
@@ -147,14 +150,20 @@ def get_null_rates(
     if not rows:
         return {}
 
+    # Invertir variable_map para lookup por ID
+    id_to_name = variable_map  # ya es {var_id: var_name}
+
     by_variable: dict[str, dict] = {}
     for r in rows:
-        if r.variable_name not in by_variable:
-            by_variable[r.variable_name] = {
+        vname = id_to_name.get(r.variable_id)
+        if vname is None:
+            continue
+        if vname not in by_variable:
+            by_variable[vname] = {
                 "null_count": 0,
                 "total_records": r.total_records or 1,
             }
-        by_variable[r.variable_name]["null_count"] += r.null_count or 0
+        by_variable[vname]["null_count"] += r.null_count or 0
 
     return {
         vname: data["null_count"] / max(data["total_records"], 1)

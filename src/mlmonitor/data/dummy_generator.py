@@ -87,6 +87,11 @@ class DummyDataGenerator:
         self.rng = random.Random(seed)
         np.random.seed(seed)
 
+        # Mapas de IDs surrogados — se pueblan en run()
+        self._registry_map: dict[str, int] = {}   # fleet_id → model_registry_id
+        self._variable_map: dict[tuple, int] = {}  # (fleet_id, var_name) → variable_id
+        self._metric_map: dict[str, int] = {}       # metric_name → metric_id
+
     def run(self) -> dict[str, int]:
         """Ejecuta la generación completa. Retorna conteo de filas por tabla."""
         counts = {}
@@ -106,9 +111,9 @@ class DummyDataGenerator:
         for seg_id, seg_desc in SEGMENTS.items():
             rows.append(MetaModelRegistry(
                 model_id=MODEL_ID,
+                fleet_id=seg_id,                        # fleet_id identifica el sub-modelo
                 model_name="BazBoost Crédito",
-                segment_id=seg_id,
-                segment_description=seg_desc,
+                model_description=seg_desc,             # descripción del segmento
                 model_type="scorecard",
                 target_definition="Probabilidad de incumplimiento en ventana de 8 semanas",
                 score_min=0,
@@ -122,15 +127,18 @@ class DummyDataGenerator:
             ))
         self.session.add_all(rows)
         self.session.flush()
+
+        # Capturar IDs surrogados
+        self._registry_map = {r.fleet_id: r.id for r in rows}
         return len(rows)
 
     def _populate_meta_variables(self) -> int:
         rows = []
         for seg_id in SEGMENTS:
+            reg_id = self._registry_map[seg_id]
             for vname in VARIABLES["numeric"]:
                 rows.append(MetaVariables(
-                    model_id=MODEL_ID,
-                    segment_id=seg_id,
+                    model_registry_id=reg_id,
                     variable_name=vname,
                     variable_type="numeric",
                     variable_rol="input",
@@ -144,8 +152,7 @@ class DummyDataGenerator:
             for vname in VARIABLES["categorical"]:
                 cats = TIPO_OCUPACION_CATS if vname == "tipo_ocupacion" else REGION_GEOGRAFICA_CATS
                 rows.append(MetaVariables(
-                    model_id=MODEL_ID,
-                    segment_id=seg_id,
+                    model_registry_id=reg_id,
                     variable_name=vname,
                     variable_type="categorical",
                     variable_rol="input",
@@ -158,23 +165,30 @@ class DummyDataGenerator:
                 ))
         self.session.add_all(rows)
         self.session.flush()
+
+        # Capturar IDs surrogados de variables
+        for r in rows:
+            # fleet_id inverso desde registry_map
+            fleet_id = next(k for k, v in self._registry_map.items() if v == r.model_registry_id)
+            self._variable_map[(fleet_id, r.variable_name)] = r.id
+
         return len(rows)
 
     def _populate_meta_metric_thresholds(self) -> int:
         rows = []
-        # Umbrales globales
+        # Umbrales globales (model_registry_id=None)
         global_thresholds = [
-            ("psi", None, 0.10, 0.20, "higher_worse"),
-            ("gini", None, 0.35, 0.25, "lower_worse"),
-            ("ks", None, 0.20, 0.15, "lower_worse"),
-            ("roll_forward_ordering_violations", None, 1, 2, "higher_worse"),
-            ("payment_rate_ordering_violations", None, 1, 2, "higher_worse"),
-            ("null_rate", None, 0.03, 0.10, "higher_worse"),
+            ("psi", 0.10, 0.20, "higher_worse"),
+            ("gini", 0.35, 0.25, "lower_worse"),
+            ("ks", 0.20, 0.15, "lower_worse"),
+            ("roll_forward_ordering_violations", 1, 2, "higher_worse"),
+            ("payment_rate_ordering_violations", 1, 2, "higher_worse"),
+            ("null_rate", 0.03, 0.10, "higher_worse"),
         ]
-        for metric, model_override, warn, crit, direction in global_thresholds:
+        for metric, warn, crit, direction in global_thresholds:
             rows.append(MetaMetricThresholds(
                 metric_name=metric,
-                model_id_override=model_override,
+                model_registry_id=None,   # NULL = umbral global
                 warning_threshold=warn,
                 critical_threshold=crit,
                 direction=direction,
@@ -183,6 +197,9 @@ class DummyDataGenerator:
             ))
         self.session.add_all(rows)
         self.session.flush()
+
+        # Capturar IDs
+        self._metric_map = {r.metric_name: r.id for r in rows}
         return len(rows)
 
     # ------------------------------------------------------------------
@@ -203,10 +220,12 @@ class DummyDataGenerator:
         rows = []
 
         for seg_id in SEGMENTS:
+            reg_id = self._registry_map[seg_id]
             total_records = self.rng.randint(2000, 8000)
 
             # Numéricas
             for vname in VARIABLES["numeric"]:
+                var_id = self._variable_map[(seg_id, vname)]
                 base_probs = self._get_base_dist(vname, seg_id)
                 probs = self._apply_drift(base_probs, vname, seg_id, week)
                 counts = self._probs_to_counts(probs, total_records)
@@ -219,20 +238,21 @@ class DummyDataGenerator:
                         null_count = int(total_records * self.rng.uniform(0.12, 0.18))
 
                     rows.append(FactDistributions(
-                        model_id=MODEL_ID,
-                        segment_id=seg_id,
-                        variable_name=vname,
+                        model_registry_id=reg_id,
+                        variable_id=var_id,
                         reference_week=ref_week,
                         reference_flag=1 if reference_flag else 0,
                         bin_label=bin_label,
                         bin_count=counts[bin_idx],
                         bin_percentage=round(probs[bin_idx], 6),
                         null_count=null_count,
+                        sum_value=None,
                         total_records=total_records,
                     ))
 
             # Categóricas
             for vname in VARIABLES["categorical"]:
+                var_id = self._variable_map[(seg_id, vname)]
                 cats = TIPO_OCUPACION_CATS if vname == "tipo_ocupacion" else REGION_GEOGRAFICA_CATS
                 base_probs = [1.0 / len(cats)] * len(cats)
                 probs = self._apply_cat_drift(base_probs, vname, seg_id, week)
@@ -240,15 +260,15 @@ class DummyDataGenerator:
 
                 for i, cat in enumerate(cats):
                     rows.append(FactDistributions(
-                        model_id=MODEL_ID,
-                        segment_id=seg_id,
-                        variable_name=vname,
+                        model_registry_id=reg_id,
+                        variable_id=var_id,
                         reference_week=ref_week,
                         reference_flag=1 if reference_flag else 0,
                         bin_label=cat,
                         bin_count=counts[i],
                         bin_percentage=round(probs[i], 6),
                         null_count=0,
+                        sum_value=None,
                         total_records=total_records,
                     ))
 
@@ -325,6 +345,7 @@ class DummyDataGenerator:
         rows = []
 
         for seg_id in SEGMENTS:
+            reg_id = self._registry_map[seg_id]
             for bin_idx, (score_bin, midpoint) in enumerate(
                 zip(SCORE_BINS, SCORE_MIDPOINTS)
             ):
@@ -336,8 +357,7 @@ class DummyDataGenerator:
                 sum_predicted_score = count_total * midpoint  # aproximación
 
                 rows.append(FactPerformanceOutcomes(
-                    model_id=MODEL_ID,
-                    segment_id=seg_id,
+                    model_registry_id=reg_id,
                     date_score_key=date_score_key,
                     date_outcome_key=date_outcome_key,
                     metric_type="roll_forward",
@@ -348,8 +368,7 @@ class DummyDataGenerator:
                     sum_predicted_score=float(sum_predicted_score),
                 ))
                 rows.append(FactPerformanceOutcomes(
-                    model_id=MODEL_ID,
-                    segment_id=seg_id,
+                    model_registry_id=reg_id,
                     date_score_key=date_score_key,
                     date_outcome_key=date_outcome_key,
                     metric_type="payment_rate_50",

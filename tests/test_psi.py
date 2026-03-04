@@ -77,58 +77,64 @@ class TestComputePSI:
 
 
 class TestPSIFromDB:
-    def test_psi_returns_float(self, session, model_id, current_week):
+    def test_psi_returns_float(self, session, segment_ids, variable_ids, current_week):
         """PSI calculado desde DB retorna un float válido."""
-        psi = get_psi_for_variable(
-            session, model_id, "s1", "nivel_endeudamiento", current_week
-        )
+        reg_id = segment_ids["s1"]
+        var_id = variable_ids["s1"]["nivel_endeudamiento"]
+        psi = get_psi_for_variable(session, reg_id, var_id, current_week)
         assert isinstance(psi, float)
         assert psi >= 0.0
 
-    def test_all_variables_returns_dict(self, session, model_id, current_week):
+    def test_all_variables_returns_dict(self, session, segment_ids, variable_ids, current_week):
         """get_psi_for_all_variables retorna dict con todas las variables."""
-        psi_dict = get_psi_for_all_variables(
-            session, model_id, "s1", current_week
-        )
+        reg_id = segment_ids["s1"]
+        var_map = {v: k for k, v in variable_ids["s1"].items()}  # {var_id: var_name}
+        psi_dict = get_psi_for_all_variables(session, reg_id, var_map, current_week)
         assert isinstance(psi_dict, dict)
         assert len(psi_dict) > 0
         for var, val in psi_dict.items():
             assert isinstance(val, float), f"PSI de {var} no es float: {val}"
             assert val >= 0.0
 
-    def test_s3_nivel_endeudamiento_psi_is_critical(self, session, model_id, current_week):
+    def test_s3_nivel_endeudamiento_psi_is_critical(
+        self, session, segment_ids, variable_ids, current_week
+    ):
         """s3 debe tener PSI CRITICAL en nivel_endeudamiento (anomalía inyectada semana 17-20)."""
-        psi = get_psi_for_variable(
-            session, model_id, "s3", "nivel_endeudamiento", current_week
-        )
+        reg_id = segment_ids["s3"]
+        var_id = variable_ids["s3"]["nivel_endeudamiento"]
+        psi = get_psi_for_variable(session, reg_id, var_id, current_week)
         assert psi > 0.20, (
             f"s3 nivel_endeudamiento esperado PSI > 0.20 (CRITICAL), obtenido: {psi:.4f}"
         )
 
-    def test_s5_capacidad_pago_psi_is_warning(self, session, model_id):
+    def test_s5_capacidad_pago_psi_is_warning(self, session, segment_ids, variable_ids):
         """s5 debe tener PSI WARNING en capacidad_pago (anomalía semana 15-20)."""
         from mlmonitor.data.dummy_generator import _week_date
         week_20 = _week_date(20)
-        psi = get_psi_for_variable(
-            session, model_id, "s5", "capacidad_pago", week_20
-        )
+        reg_id = segment_ids["s5"]
+        var_id = variable_ids["s5"]["capacidad_pago"]
+        psi = get_psi_for_variable(session, reg_id, var_id, week_20)
         assert psi > 0.10, (
             f"s5 capacidad_pago esperado PSI > 0.10 (WARNING), obtenido: {psi:.4f}"
         )
 
-    def test_max_psi_returns_correct_variable(self, session, model_id, current_week):
+    def test_max_psi_returns_correct_variable(
+        self, session, segment_ids, variable_ids, current_week
+    ):
         """get_max_psi retorna el PSI máximo y la variable correcta."""
-        psi_dict = get_psi_for_all_variables(
-            session, model_id, "s3", current_week
-        )
+        reg_id = segment_ids["s3"]
+        var_map = {v: k for k, v in variable_ids["s3"].items()}
+        psi_dict = get_psi_for_all_variables(session, reg_id, var_map, current_week)
         max_psi, max_var = get_max_psi(psi_dict)
         assert max_psi >= 0.0
         assert max_var in psi_dict
         assert psi_dict[max_var] == max_psi
 
-    def test_null_rates_returns_dict(self, session, model_id, current_week):
+    def test_null_rates_returns_dict(self, session, segment_ids, variable_ids, current_week):
         """get_null_rates retorna dict con tasas de nulos."""
-        null_rates = get_null_rates(session, model_id, "s9", current_week)
+        reg_id = segment_ids["s9"]
+        var_map = {v: k for k, v in variable_ids["s9"].items()}
+        null_rates = get_null_rates(session, reg_id, var_map, current_week)
         assert isinstance(null_rates, dict)
         # s9 debe tener null rate alto en meses_en_buro (anomalía semana 18-20)
         if "meses_en_buro" in null_rates:

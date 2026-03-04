@@ -21,23 +21,27 @@ from mlmonitor.db.models import FactPerformanceOutcomes
 
 def get_business_metrics_table(
     session: Session,
-    model_id: str,
-    segment_id: str,
+    model_registry_id: int,
     reference_week: date,
     lag_weeks: int = 8,
 ) -> pd.DataFrame:
     """
     Retorna tabla de métricas de negocio por decil ordenada por score ascendente.
-    reference_week = semana en que se generó el score (date_score_key).
-    date_outcome_key = reference_week + lag_weeks.
-    Columnas: score_bin, score_midpoint, count_total, roll_forward_rate, payment_rate
+
+    Args:
+        model_registry_id: ID surrogado del registro del modelo (segmento)
+        reference_week: semana en que se generó el score (date_score_key)
+        lag_weeks: semanas de lag para el outcome
+
+    Returns:
+        DataFrame con columnas: score_bin, score_midpoint, count_total,
+        roll_forward_rate, payment_rate
     """
     outcome_week = reference_week + timedelta(weeks=lag_weeks)
     rows = (
         session.query(FactPerformanceOutcomes)
         .filter(
-            FactPerformanceOutcomes.model_id == model_id,
-            FactPerformanceOutcomes.segment_id == segment_id,
+            FactPerformanceOutcomes.model_registry_id == model_registry_id,
             FactPerformanceOutcomes.date_score_key == reference_week,
             FactPerformanceOutcomes.date_outcome_key == outcome_week,
             FactPerformanceOutcomes.metric_type.in_(["roll_forward", "payment_rate_50"]),
@@ -130,11 +134,10 @@ def check_ordering_violations(
 
 def get_roll_forward_violations(
     session: Session,
-    model_id: str,
-    segment_id: str,
+    model_registry_id: int,
     reference_week: date,
 ) -> dict:
-    df = get_business_metrics_table(session, model_id, segment_id, reference_week)
+    df = get_business_metrics_table(session, model_registry_id, reference_week)
     if df.empty or "roll_forward_rate" not in df.columns:
         return {"violations": 0, "violation_pairs": []}
     return check_ordering_violations(df, "roll_forward_rate", ascending=False)
@@ -142,11 +145,10 @@ def get_roll_forward_violations(
 
 def get_payment_rate_violations(
     session: Session,
-    model_id: str,
-    segment_id: str,
+    model_registry_id: int,
     reference_week: date,
 ) -> dict:
-    df = get_business_metrics_table(session, model_id, segment_id, reference_week)
+    df = get_business_metrics_table(session, model_registry_id, reference_week)
     if df.empty or "payment_rate" not in df.columns:
         return {"violations": 0, "violation_pairs": []}
     return check_ordering_violations(df, "payment_rate", ascending=True)

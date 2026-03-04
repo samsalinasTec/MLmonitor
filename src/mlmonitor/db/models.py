@@ -19,6 +19,7 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    ForeignKey,
 )
 from sqlalchemy.orm import DeclarativeBase
 from sqlalchemy.types import TypeDecorator
@@ -56,16 +57,16 @@ class MetaModelRegistry(Base):
     __tablename__ = "META_MODEL_REGISTRY"
     __table_args__ = (
         UniqueConstraint(
-            "model_id", "segment_id", "valid_from",
+            "model_id", "fleet_id", "valid_from",
             name="uq_meta_model_registry"
         ),
     )
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     model_id = Column(String(100), nullable=False, index=True)
+    fleet_id = Column(String(20), nullable=False)
     model_name = Column(String(200), nullable=False)
-    segment_id = Column(String(20), nullable=False)
-    segment_description = Column(String(200))
+    model_description = Column(String(200))
     model_type = Column(String(50), nullable=False)  # scorecard, logistic_regression, xgboost, etc.
     target_definition = Column(String(500))  # qué predice el modelo en lenguaje natural
     score_min = Column(Integer, default=0)
@@ -85,17 +86,16 @@ class MetaVariables(Base):
     __tablename__ = "META_VARIABLES"
     __table_args__ = (
         UniqueConstraint(
-            "model_id", "segment_id", "variable_name", "valid_from",
+            "model_registry_id", "variable_name", "valid_from",
             name="uq_meta_variables"
         ),
     )
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    model_id = Column(String(100), nullable=False, index=True)
-    segment_id = Column(String(20), nullable=False, index=True)
+    model_registry_id = Column(Integer, ForeignKey("META_MODEL_REGISTRY.id"), nullable=False, index=True)
     variable_name = Column(String(100), nullable=False)
     variable_type = Column(String(20), nullable=False)  # numeric | categorical
-    variable_rol = Column(String(20), nullable=False, default="input")  # input | output | target
+    variable_rol = Column(String(20), nullable=True, default="input")  # input | output | target
     description = Column(String(300))
     woe_categories = Column(JSONText)  # para categóricas: lista de valores
     binning_rules = Column(JSONText)  # ej: {"type": "fixed_cuts", "cuts": [0, 201, ...]}
@@ -105,17 +105,22 @@ class MetaVariables(Base):
 
 
 class MetaMetricThresholds(Base):
-    """Umbrales de alerta por métrica. model_id_override NULL = global. SCD2."""
+    """Catalogo de metricas y umbrales de alerta. model_registry_id NULL = global. SCD2."""
 
     __tablename__ = "META_METRIC_THRESHOLDS"
+    __table_args__ = (
+        UniqueConstraint(
+            "model_registry_id", "metric_name", "valid_from",
+            name="uq_meta_metric_thresholds"
+        ),
+    )
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     metric_name = Column(String(100), nullable=False)
-    model_id_override = Column(String(100), nullable=True)  # NULL = global
-    segment_id = Column(String(20), nullable=True)  # NULL = todos los segmentos
+    model_registry_id = Column(Integer, ForeignKey("META_MODEL_REGISTRY.id"), nullable=True, index=True)  # NULL = global
     warning_threshold = Column(Float)
     critical_threshold = Column(Float)
-    direction = Column(String(10), default="higher_worse")  # higher_worse | lower_worse
+    direction = Column(String(20), default="higher_worse")  # higher_worse | lower_worse
     valid_from = Column(Date, nullable=False)
     valid_to = Column(Date, nullable=True)
 
@@ -131,15 +136,14 @@ class FactDistributions(Base):
     __tablename__ = "FACT_DISTRIBUTIONS"
     __table_args__ = (
         UniqueConstraint(
-            "model_id", "segment_id", "variable_name", "reference_week", "bin_label",
+            "model_registry_id", "variable_id", "reference_week", "bin_label",
             name="uq_fact_distributions"
         ),
     )
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    model_id = Column(String(100), nullable=False, index=True)
-    segment_id = Column(String(20), nullable=False, index=True)
-    variable_name = Column(String(100), nullable=False)
+    model_registry_id = Column(Integer, ForeignKey("META_MODEL_REGISTRY.id"), nullable=False, index=True)
+    variable_id = Column(Integer, ForeignKey("META_VARIABLES.id"), nullable=False, index=True)
     reference_week = Column(Date, nullable=False, index=True)
     reference_flag = Column(SmallInteger, default=0)  # 1 = baseline de entrenamiento
     bin_label = Column(String(100), nullable=False)
@@ -157,15 +161,14 @@ class FactPerformanceOutcomes(Base):
     __tablename__ = "FACT_PERFORMANCE_OUTCOMES"
     __table_args__ = (
         UniqueConstraint(
-            "model_id", "segment_id", "date_score_key", "date_outcome_key",
+            "model_registry_id", "date_score_key", "date_outcome_key",
             "metric_type", "score_bin",
             name="uq_fact_performance_outcomes"
         ),
     )
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    model_id = Column(String(100), nullable=False, index=True)
-    segment_id = Column(String(20), nullable=False, index=True)
+    model_registry_id = Column(Integer, ForeignKey("META_MODEL_REGISTRY.id"), nullable=False, index=True)
     date_score_key = Column(Date, nullable=False, index=True)  # semana en que se generó el score
     date_outcome_key = Column(Date, nullable=False, index=True)  # semana en que se observó el outcome (T+lag)
     metric_type = Column(String(50), nullable=False)  # roll_forward, payment_rate_50, b_malo_8_13, etc.
@@ -183,18 +186,17 @@ class FactMetricsHistory(Base):
     __tablename__ = "FACT_METRICS_HISTORY"
     __table_args__ = (
         UniqueConstraint(
-            "model_id", "segment_id", "calculation_week", "metric_name",
-            name="uq_fact_metrics_history"
-        ),
+        "model_registry_id", "calculation_week", "metric_id", "variable_id",
+        name="uq_fact_metrics_history"
+),
     )
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    model_id = Column(String(100), nullable=False, index=True)
-    segment_id = Column(String(20), nullable=False, index=True)
+    model_registry_id = Column(Integer, ForeignKey("META_MODEL_REGISTRY.id"), nullable=False, index=True)
+    variable_id = Column(Integer, ForeignKey("META_VARIABLES.id"), nullable=True)
     calculation_week = Column(Date, nullable=False, index=True)
-    metric_name = Column(String(100), nullable=False)
+    metric_id = Column(Integer, ForeignKey("META_METRIC_THRESHOLDS.id"), nullable=False, index=True)
     metric_value = Column(Float)
-    alert_flag = Column(SmallInteger, default=0)  # 0=OK, 1=WARNING, 2=CRITICAL
     alert_label = Column(String(20))  # "OK" | "WARNING" | "CRITICAL"
     details = Column(JSONText)  # detalles adicionales por métrica
     calculated_from = Column(String(50))  # FACT_DISTRIBUTIONS | FACT_PERFORMANCE_OUTCOMES

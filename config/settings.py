@@ -14,10 +14,10 @@ class Settings(BaseSettings):
 
     # AWS (región compartida para Bedrock, S3 y SES)
     aws_region: str = "us-east-1"
-    bedrock_model_id: str = "anthropic.claude-3-sonnet-20240229-v1:0"
+    bedrock_model_id: str = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
 
     # S3 — vacío = upload deshabilitado
-    s3_bucket: str = ""
+    s3_bucket: str = "ml-monitoring-reports-credito"
     s3_prefix: str = "mlmonitor/reports"
 
     # SES
@@ -37,4 +37,19 @@ class Settings(BaseSettings):
         return [r.strip() for r in self.email_recipients.split(",") if r.strip()]
 
 
-settings = Settings()
+def _build_settings() -> Settings:
+    """
+    Crea el objeto Settings combinando .env (no-sensible) + Secrets Manager (sensible).
+    Si SM no está disponible, se usan los defaults (permite dev local sin AWS).
+    """
+    s = Settings()
+    try:
+        from config.secrets_loader import load_all_secrets
+        overrides = load_all_secrets(s.aws_region)
+        return s.model_copy(update=overrides)
+    except Exception as e:
+        print(f"[settings] Secrets Manager no disponible, usando defaults: {e}")
+        return s
+
+
+settings = _build_settings()

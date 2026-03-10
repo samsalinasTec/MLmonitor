@@ -19,6 +19,7 @@ scipy = "^1.12"
 ipykernel = "^7.2.0"
 boto3 = "^1.34"
 psycopg2-binary = "^2.9"
+python-pptx = "^1.0.2"
 
 [tool.poetry.extras]
 oracle = ["python-oracledb"]

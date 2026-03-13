@@ -72,7 +72,7 @@ def performance_week():
 @pytest.fixture
 def segment_ids(session, model_id):
     """
-    Retorna {fleet_id: model_registry_id} para el modelo dado.
+    Retorna {submodel_id: model_registry_id} para el modelo dado.
     Ejemplo: {"s1": 1, "s2": 2, ...}
     """
     regs = (
@@ -83,17 +83,17 @@ def segment_ids(session, model_id):
         )
         .all()
     )
-    return {r.fleet_id: r.id for r in regs}
+    return {r.submodel_id: r.id for r in regs}
 
 
 @pytest.fixture
 def variable_ids(session, segment_ids):
     """
-    Retorna {fleet_id: {var_name: var_id}} para todos los segmentos.
+    Retorna {submodel_id: {var_name: var_id}} para todos los segmentos.
     Ejemplo: {"s1": {"capacidad_pago": 1, ...}, ...}
     """
     result = {}
-    for fleet_id, reg_id in segment_ids.items():
+    for submodel_id, reg_id in segment_ids.items():
         vars_ = (
             session.query(MetaVariables)
             .filter(
@@ -102,7 +102,7 @@ def variable_ids(session, segment_ids):
             )
             .all()
         )
-        result[fleet_id] = {v.variable_name: v.id for v in vars_}
+        result[submodel_id] = {v.variable_name: v.id for v in vars_}
     return result
 
 

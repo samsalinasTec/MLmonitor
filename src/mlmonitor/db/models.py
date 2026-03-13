@@ -57,14 +57,14 @@ class MetaModelRegistry(Base):
     __tablename__ = "META_MODEL_REGISTRY"
     __table_args__ = (
         UniqueConstraint(
-            "model_id", "fleet_id", "valid_from",
+            "model_id", "submodel_id", "valid_from",
             name="uq_meta_model_registry"
         ),
     )
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     model_id = Column(String(100), nullable=False, index=True)
-    fleet_id = Column(String(20), nullable=False)
+    submodel_id = Column(String(20), nullable=False)
     model_name = Column(String(200), nullable=False)
     model_description = Column(String(200))
     model_type = Column(String(50), nullable=False)  # scorecard, logistic_regression, xgboost, etc.

@@ -99,12 +99,12 @@ class TestMetricsCalculator:
         calc = MetricsCalculator(session)
         calc.run_for_model(model_id, current_week)
 
-        for fleet_id, reg_id in segment_ids.items():
+        for submodel_id, reg_id in segment_ids.items():
             metrics = calc.get_current_metrics_for_segment(
                 reg_id, current_week, metric_name_map
             )
             assert len(metrics) > 0, (
-                f"Segmento {fleet_id} (id={reg_id}) no tiene métricas calculadas"
+                f"Segmento {submodel_id} (id={reg_id}) no tiene métricas calculadas"
             )
 
     def test_alert_evaluator_uses_thresholds(self, session, segment_ids):

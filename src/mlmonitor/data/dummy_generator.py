@@ -88,8 +88,8 @@ class DummyDataGenerator:
         np.random.seed(seed)
 
         # Mapas de IDs surrogados — se pueblan en run()
-        self._registry_map: dict[str, int] = {}   # fleet_id → model_registry_id
-        self._variable_map: dict[tuple, int] = {}  # (fleet_id, var_name) → variable_id
+        self._registry_map: dict[str, int] = {}   # submodel_id → model_registry_id
+        self._variable_map: dict[tuple, int] = {}  # (submodel_id, var_name) → variable_id
         self._metric_map: dict[str, int] = {}       # metric_name → metric_id
 
     def run(self) -> dict[str, int]:
@@ -111,7 +111,7 @@ class DummyDataGenerator:
         for seg_id, seg_desc in SEGMENTS.items():
             rows.append(MetaModelRegistry(
                 model_id=MODEL_ID,
-                fleet_id=seg_id,                        # fleet_id identifica el sub-modelo
+                submodel_id=seg_id,
                 model_name="BazBoost Crédito",
                 model_description=seg_desc,             # descripción del segmento
                 model_type="scorecard",
@@ -129,7 +129,7 @@ class DummyDataGenerator:
         self.session.flush()
 
         # Capturar IDs surrogados
-        self._registry_map = {r.fleet_id: r.id for r in rows}
+        self._registry_map = {r.submodel_id: r.id for r in rows}
         return len(rows)
 
     def _populate_meta_variables(self) -> int:
@@ -168,9 +168,8 @@ class DummyDataGenerator:
 
         # Capturar IDs surrogados de variables
         for r in rows:
-            # fleet_id inverso desde registry_map
-            fleet_id = next(k for k, v in self._registry_map.items() if v == r.model_registry_id)
-            self._variable_map[(fleet_id, r.variable_name)] = r.id
+            submodel_id = next(k for k, v in self._registry_map.items() if v == r.model_registry_id)
+            self._variable_map[(submodel_id, r.variable_name)] = r.id
 
         return len(rows)
 

@@ -126,7 +126,7 @@ class MetricsCalculator:
 
         for seg in segments:
             model_registry_id = seg.id
-            fleet_id = seg.fleet_id
+            submodel_id = seg.submodel_id
 
             # Cargar variables del segmento: {var_id: var_name}
             var_rows = (

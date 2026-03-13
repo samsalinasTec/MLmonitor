@@ -52,7 +52,7 @@ class ReportBuilder:
         """
         performance_week = calculation_week - timedelta(weeks=LAG_WEEKS)
 
-        # Obtener metadata del modelo (un registro por segmento/fleet_id)
+        # Obtener metadata del modelo (un registro por submodel_id)
         model_regs = (
             self.session.query(MetaModelRegistry)
             .filter(
@@ -88,8 +88,8 @@ class ReportBuilder:
 
             seg_metrics = self._build_segment_metrics(
                 model_registry_id=reg.id,
-                segment_id=reg.fleet_id,
-                segment_description=reg.model_description or reg.fleet_id,
+                segment_id=reg.submodel_id,
+                segment_description=reg.model_description or reg.submodel_id,
                 variable_map=variable_map,
                 metric_name_map=metric_name_map,
                 calculation_week=calculation_week,

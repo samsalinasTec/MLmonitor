@@ -83,3 +83,4 @@ htmlcov/
 
 # data
 *.csv
+scripts/create_presentation.py

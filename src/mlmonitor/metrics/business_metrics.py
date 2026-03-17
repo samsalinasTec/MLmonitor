@@ -1,9 +1,9 @@
 """
-Métricas de negocio: RollForward y PaymentRate por decil de score.
+Métricas de negocio: tasas B_MALO por decil de score.
 
 Reglas de ordenamiento:
-- RollForward: debe DECRECER conforme sube el score (bajo score = alto riesgo)
-- PaymentRate: debe CRECER conforme sube el score
+- Tasas de malo (incumplimiento): deben DECRECER conforme sube el score
+  (bajo score = alto riesgo)
 
 check_ordering_violation(): cuenta el número de bins consecutivos donde
 la métrica viola la monotonía esperada.
@@ -11,12 +11,15 @@ la métrica viola la monotonía esperada.
 Tasas se calculan al vuelo: count_event_real / count_total por metric_type.
 """
 
-from datetime import date, timedelta
+from datetime import date
 
 import pandas as pd
 from sqlalchemy.orm import Session
 
 from mlmonitor.db.models import FactPerformanceOutcomes
+
+B_MALO_ACTIVE = ['b_malo2_4', 'b_malo4_6', 'b_malo8_13', 'b_malo8_16', 'first_payment_default2']
+B_MALO_PRIMARY = 'first_payment_default2'
 
 
 def get_business_metrics_table(
@@ -31,20 +34,20 @@ def get_business_metrics_table(
     Args:
         model_registry_id: ID surrogado del registro del modelo (segmento)
         reference_week: semana en que se generó el score (date_score_key)
-        lag_weeks: semanas de lag para el outcome
+        lag_weeks: no usado (mantenido para compatibilidad de firma — datos pre-labeled)
 
     Returns:
         DataFrame con columnas: score_bin, score_midpoint, count_total,
-        roll_forward_rate, payment_rate
+        b_malo2_4_rate, b_malo4_6_rate, b_malo8_13_rate, b_malo8_16_rate,
+        first_payment_default2_rate
     """
-    outcome_week = reference_week + timedelta(weeks=lag_weeks)
     rows = (
         session.query(FactPerformanceOutcomes)
         .filter(
             FactPerformanceOutcomes.model_registry_id == model_registry_id,
             FactPerformanceOutcomes.date_score_key == reference_week,
-            FactPerformanceOutcomes.date_outcome_key == outcome_week,
-            FactPerformanceOutcomes.metric_type.in_(["roll_forward", "payment_rate_50"]),
+            FactPerformanceOutcomes.date_outcome_key == reference_week,
+            FactPerformanceOutcomes.metric_type.in_(B_MALO_ACTIVE),
         )
         .order_by(FactPerformanceOutcomes.score_midpoint)
         .all()
@@ -53,7 +56,7 @@ def get_business_metrics_table(
     if not rows:
         return pd.DataFrame()
 
-    # Agrupar por score_bin y calcular tasas desde conteos atómicos
+    # Agrupar por score_bin y construir columnas por b_malo var
     by_bin: dict[str, dict] = {}
     for r in rows:
         key = r.score_bin
@@ -62,15 +65,15 @@ def get_business_metrics_table(
                 "score_bin": r.score_bin,
                 "score_midpoint": r.score_midpoint or 0,
                 "count_total": r.count_total or 0,
-                "roll_forward_rate": None,
-                "payment_rate": None,
             }
+            for col in B_MALO_ACTIVE:
+                by_bin[key][f"{col}_rate"] = None
+
         total = r.count_total or 0
         rate = (r.count_event_real / total) if total else None
-        if r.metric_type == "roll_forward":
-            by_bin[key]["roll_forward_rate"] = rate
-        elif r.metric_type == "payment_rate_50":
-            by_bin[key]["payment_rate"] = rate
+        rate_col = f"{r.metric_type}_rate"
+        if rate_col in by_bin[key]:
+            by_bin[key][rate_col] = rate
 
     data = list(by_bin.values())
     return pd.DataFrame(data).sort_values("score_midpoint").reset_index(drop=True)
@@ -138,9 +141,10 @@ def get_roll_forward_violations(
     reference_week: date,
 ) -> dict:
     df = get_business_metrics_table(session, model_registry_id, reference_week)
-    if df.empty or "roll_forward_rate" not in df.columns:
+    col = f"{B_MALO_PRIMARY}_rate"
+    if df.empty or col not in df.columns:
         return {"violations": 0, "violation_pairs": []}
-    return check_ordering_violations(df, "roll_forward_rate", ascending=False)
+    return check_ordering_violations(df, col, ascending=False)
 
 
 def get_payment_rate_violations(
@@ -148,7 +152,5 @@ def get_payment_rate_violations(
     model_registry_id: int,
     reference_week: date,
 ) -> dict:
-    df = get_business_metrics_table(session, model_registry_id, reference_week)
-    if df.empty or "payment_rate" not in df.columns:
-        return {"violations": 0, "violation_pairs": []}
-    return check_ordering_violations(df, "payment_rate", ascending=True)
+    # Sin datos de tasa de cumplimiento en el CSV actual
+    return {"violations": 0, "violation_pairs": []}

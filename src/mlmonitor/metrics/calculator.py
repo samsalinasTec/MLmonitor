@@ -236,9 +236,10 @@ class MetricsCalculator:
                     calculated_from="FACT_DISTRIBUTIONS",
                 ))
 
-        # --- Gini y KS (con lag de 8 semanas) ---
+        # --- Gini y KS (pre-labeled, sin lag adicional) ---
         perf_metrics = get_gini_ks_for_segment(
-            self.session, model_registry_id, performance_week
+            self.session, model_registry_id, performance_week,
+            metric_type="first_payment_default2",
         )
         if perf_metrics.get("gini") is not None:
             _, label = self.evaluator.evaluate("gini", perf_metrics["gini"], model_registry_id)

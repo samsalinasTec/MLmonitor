@@ -23,7 +23,7 @@ def _build_performance_df(
     model_registry_id: int,
     date_score_key: date,
     date_outcome_key: date,
-    metric_type: str = "roll_forward",
+    metric_type: str = "first_payment_default2",
 ) -> pd.DataFrame:
     """Carga los outcomes de una semana y construye el DataFrame base."""
     rows = (
@@ -101,6 +101,7 @@ def get_gini_ks_for_segment(
     session: Session,
     model_registry_id: int,
     performance_week: date,
+    metric_type: str = "first_payment_default2",
     lag_weeks: int = 8,
 ) -> dict[str, float]:
     """
@@ -109,14 +110,14 @@ def get_gini_ks_for_segment(
     Args:
         model_registry_id: ID surrogado del registro del modelo (segmento)
         performance_week: date_score_key (semana en que se generó el score)
-        lag_weeks: semanas de lag para el outcome (default 8)
+        metric_type: columna de outcome a usar (pre-labeled, no lag adicional)
+        lag_weeks: no usado (mantenido para compatibilidad de firma)
     """
-    date_outcome_key = performance_week + timedelta(weeks=lag_weeks)
     df = _build_performance_df(
         session, model_registry_id,
         date_score_key=performance_week,
-        date_outcome_key=date_outcome_key,
-        metric_type="roll_forward",
+        date_outcome_key=performance_week,
+        metric_type=metric_type,
     )
     if df.empty:
         return {"gini": None, "ks": None, "auc": None}

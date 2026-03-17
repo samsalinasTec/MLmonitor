@@ -125,18 +125,21 @@
 
     <!-- Tabla de negocio por decil -->
     {% if seg.business_table %}
-    <h2>Métricas de Negocio por Decil (lag {{ context.lag_semanas }}s)</h2>
+    <h2>Métricas de Negocio por Decil</h2>
     <p style="font-size:9pt; color:#666; margin-bottom:0.2cm;">
-        Score bajo = mayor riesgo. Tasa de Incumplimiento debe decrecer; Tasa de Cumplimiento debe crecer conforme sube el score.
+        Score bajo = mayor riesgo. Las tasas de incumplimiento deben decrecer conforme sube el score.
     </p>
     <table>
         <thead>
             <tr>
                 <th>Score Bin</th>
                 <th>Midpoint</th>
-                <th>Total Clientes</th>
-                <th>Tasa Incumplimiento (%)</th>
-                <th>Tasa Cumplimiento (%)</th>
+                <th>Total</th>
+                <th>FPD (%)</th>
+                <th>Malo 2-4 (%)</th>
+                <th>Malo 4-6 (%)</th>
+                <th>Malo 8-13 (%)</th>
+                <th>Malo 8-16 (%)</th>
             </tr>
         </thead>
         <tbody>
@@ -145,8 +148,11 @@
                 <td>{{ row.score_bin }}</td>
                 <td>{{ row.score_midpoint }}</td>
                 <td>{{ row.count_total | int }}</td>
-                <td>{{ "%.1f" | format((row.roll_forward_rate or 0) * 100) }}%</td>
-                <td>{{ "%.1f" | format((row.payment_rate or 0) * 100) }}%</td>
+                <td>{{ "%.2f" | format((row.first_payment_default2_rate or 0) * 100) }}%</td>
+                <td>{{ "%.2f" | format((row.b_malo2_4_rate or 0) * 100) }}%</td>
+                <td>{{ "%.2f" | format((row.b_malo4_6_rate or 0) * 100) }}%</td>
+                <td>{{ "%.2f" | format((row.b_malo8_13_rate or 0) * 100) }}%</td>
+                <td>{{ "%.2f" | format((row.b_malo8_16_rate or 0) * 100) }}%</td>
             </tr>
             {% endfor %}
         </tbody>

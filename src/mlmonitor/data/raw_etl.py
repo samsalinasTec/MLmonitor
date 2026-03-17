@@ -13,7 +13,7 @@ Uso:
 """
 
 import logging
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 import numpy as np
@@ -50,6 +50,15 @@ SCORE_MIDPOINTS = [(lo + hi) // 2 for lo, hi in SCORE_BINS]
 
 MISSING_SENTINEL = -100
 NUM_BINS_NUMERIC = 10
+
+B_MALO_ACTIVE = ['b_malo2_4', 'b_malo4_6', 'b_malo8_13', 'b_malo8_16', 'first_payment_default2']
+
+
+def _semana_to_date(semana_num: int) -> date:
+    """Convierte semana ISO (ej: 202541) al inicio de periodo W-MON (martes)."""
+    year, week = divmod(semana_num, 100)
+    iso_monday = date.fromisocalendar(year, week, 1)  # lunes ISO
+    return iso_monday - timedelta(days=6)              # martes = start W-MON
 
 
 class RawDataETL:
@@ -89,7 +98,7 @@ class RawDataETL:
 
     def _load_raw_files(self) -> None:
         serc_path = self.raw_dir / "variables_serc.csv"
-        weekly_path = self.raw_dir / "muestra_weekly.csv"
+        weekly_path = self.raw_dir / "muestra_weekly_S32_S41.csv"
 
         logger.info("Loading %s", serc_path)
         self._serc_df = pd.read_csv(serc_path)
@@ -283,6 +292,7 @@ class RawDataETL:
             _, bin_edges = pd.cut(valid_values, bins=NUM_BINS_NUMERIC, retbins=True)
 
         n_bins = len(bin_edges) - 1
+        first_week = grp["_reference_week"].dropna().min()
 
         for ref_week, week_grp in grp.groupby("_reference_week"):
             vals = week_grp["fcvalor_variable"]
@@ -294,6 +304,7 @@ class RawDataETL:
                 continue
 
             bin_indices = np.digitize(clean.values, bin_edges[1:-1])
+            reference_flag = 1 if ref_week == first_week else 0
 
             for bin_idx in range(n_bins):
                 label = f"bin_{bin_idx + 1}"
@@ -304,7 +315,7 @@ class RawDataETL:
                     model_registry_id=reg_id,
                     variable_id=var_id,
                     reference_week=ref_week,
-                    reference_flag=0,
+                    reference_flag=reference_flag,
                     bin_label=label,
                     bin_count=count,
                     bin_percentage=round(pct, 6),
@@ -319,11 +330,13 @@ class RawDataETL:
     ) -> list[FactDistributions]:
         """Bin a categorical variable by its distinct values per week."""
         rows = []
+        first_week = grp["_reference_week"].dropna().min()
         for ref_week, week_grp in grp.groupby("_reference_week"):
             vals = week_grp["fcvalor_variable"].astype(str)
             total_records = len(vals)
             null_count = int(week_grp["fcvalor_variable"].isna().sum())
             counts = vals.value_counts()
+            reference_flag = 1 if ref_week == first_week else 0
 
             for cat_val, count in counts.items():
                 pct = count / total_records if total_records > 0 else 0.0
@@ -331,7 +344,7 @@ class RawDataETL:
                     model_registry_id=reg_id,
                     variable_id=var_id,
                     reference_week=ref_week,
-                    reference_flag=0,
+                    reference_flag=reference_flag,
                     bin_label=str(cat_val),
                     bin_count=int(count),
                     bin_percentage=round(pct, 6),
@@ -359,6 +372,12 @@ class RawDataETL:
         score_df = score_df.dropna(subset=["_reference_week", "fnpuntaje"])
 
         all_rows: list[FactDistributions] = []
+
+        # Pre-compute first week per segment for reference_flag
+        first_week_by_seg: dict[int, date] = {}
+        for seg_id, seg_grp in score_df.groupby("fiidsegmento"):
+            first_week_by_seg[seg_id] = seg_grp["_reference_week"].dropna().min()
+
         for (seg_id, ref_week), grp in score_df.groupby(["fiidsegmento", "_reference_week"]):
             submodel_id = f"s{seg_id}"
             score_var_id = self._score_var_map.get(submodel_id)
@@ -368,6 +387,7 @@ class RawDataETL:
 
             total_records = len(grp)
             scores = grp["fnpuntaje"]
+            reference_flag = 1 if ref_week == first_week_by_seg.get(seg_id) else 0
 
             for (lo, hi), label, midpoint in zip(SCORE_BINS, SCORE_BIN_LABELS, SCORE_MIDPOINTS):
                 in_bin = scores[(scores >= lo) & (scores < hi)]
@@ -378,7 +398,7 @@ class RawDataETL:
                     model_registry_id=reg_id,
                     variable_id=score_var_id,
                     reference_week=ref_week,
-                    reference_flag=0,
+                    reference_flag=reference_flag,
                     bin_label=label,
                     bin_count=count,
                     bin_percentage=round(pct, 6),
@@ -427,39 +447,35 @@ class RawDataETL:
             dict(zip(SCORE_BIN_LABELS, SCORE_MIDPOINTS))
         )
 
-        df["_date_score"] = pd.to_datetime(df["fdfecsol"], format="%d%b%Y", errors="coerce")
-        if df["_date_score"].isna().all():
-            df["_date_score"] = pd.to_datetime(df["fdfecsol"], errors="coerce")
-
-        df["_date_score"] = df["_date_score"].dt.date
-
         all_rows: list[FactPerformanceOutcomes] = []
 
-        for (seg_id, week_num), grp in df.groupby(["fiidsegmento", "semana_num"]):
+        for (seg_id, semana_num), grp in df.groupby(["fiidsegmento", "semana_num"]):
             submodel_id = f"s{seg_id}"
             reg_id = self._registry_map.get(submodel_id)
             if reg_id is None:
                 continue
 
+            date_score_key = _semana_to_date(int(semana_num))
+
             for score_bin, bin_grp in grp.groupby("_score_bin", observed=True):
                 count_total = len(bin_grp)
                 midpoint = bin_grp["_midpoint"].iloc[0] if len(bin_grp) > 0 else None
-                date_score = bin_grp["_date_score"].dropna().min() if not bin_grp["_date_score"].isna().all() else None
 
-                fpd_col = "first_payment_default2"
-                fpd_valid = bin_grp[fpd_col].dropna()
-                count_fpd = int(fpd_valid.sum()) if not fpd_valid.empty else 0
+                for bmalo_col in B_MALO_ACTIVE:
+                    if bmalo_col not in bin_grp.columns:
+                        continue
+                    valid = bin_grp[bmalo_col].dropna()
+                    count_event_real = int(valid.sum()) if not valid.empty else 0
 
-                if date_score is not None:
                     all_rows.append(FactPerformanceOutcomes(
                         model_registry_id=reg_id,
-                        date_score_key=date_score,
-                        date_outcome_key=date_score,
-                        metric_type="first_payment_default",
+                        date_score_key=date_score_key,
+                        date_outcome_key=date_score_key,
+                        metric_type=bmalo_col,
                         score_bin=str(score_bin),
                         score_midpoint=int(midpoint) if midpoint is not None else None,
                         count_total=count_total,
-                        count_event_real=count_fpd,
+                        count_event_real=count_event_real,
                         sum_predicted_score=float(bin_grp["fnpuntaje"].sum()),
                     ))
 

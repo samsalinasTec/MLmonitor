@@ -171,7 +171,7 @@ class FactPerformanceOutcomes(Base):
     model_registry_id = Column(Integer, ForeignKey("META_MODEL_REGISTRY.id"), nullable=False, index=True)
     date_score_key = Column(Date, nullable=False, index=True)  # semana en que se generó el score
     date_outcome_key = Column(Date, nullable=False, index=True)  # semana en que se observó el outcome (T+lag)
-    metric_type = Column(String(50), nullable=False)  # roll_forward, payment_rate_50, b_malo_8_13, etc.
+    metric_type = Column(String(50), nullable=False)  # b_malo2_4, b_malo4_6, b_malo8_13, b_malo8_16, first_payment_default2, etc.
     score_bin = Column(String(20), nullable=False)  # "0-100", "100-200", ...
     score_midpoint = Column(Integer)
     count_total = Column(Integer, default=0)

@@ -1,7 +1,7 @@
 # Datos Faltantes — Área de Crédito
 
 Documento generado a partir del análisis de las tablas raw entregadas
-(`variables_serc.csv`, `muestra_weekly.csv`, `Variables_por_segmento.xlsx`,
+(`variables_serc_s32_s41.csv`, `muestra_weekly_S32_S41.csv`, `Variables_por_segmento.xlsx`,
 `layout_variables_bb.csv`) y su mapeo al modelo estrella de MLMonitor.
 
 ---
@@ -116,7 +116,7 @@ corresponde a los mismos clientes.
 
 ### 3.2 Variables extra en SERC no presentes en Variables_por_segmento
 
-En `variables_serc.csv` hay **29 variables** que no están en la lista canónica de
+En `variables_serc_s32_s41.csv` hay **30 variables** que no están en la lista canónica de
 `Variables_por_segmento.xlsx`. Son variables intermedias o de soporte que se usan
 durante el scoring. Se necesita confirmar si estas variables también deben monitorearse
 o si solo se monitorean las variables oficiales del scorecard.
@@ -154,6 +154,7 @@ o si solo se monitorean las variables oficiales del scorecard.
 | `SLDFINMESN3` | 8 |
 | `SLDFINMESN6` | 4, 7 |
 | `SLDPROMMENSUAL` | 6 |
+| `SLDPROMMENSUALN3` | 1 |
 | `SLDPROMMES` | 8 |
 | `TXNCOMPRA` | 9 |
 

@@ -68,58 +68,52 @@
                 <td>Variable: {{ seg.psi_max_variable }}</td>
             </tr>
             {% endif %}
-            {% if seg.gini is not none %}
+            {% for bmalo, gini_val in seg.gini.items() %}
+            {% if gini_val is not none %}
             <tr class="metric-row">
-                <td>Gini</td>
-                <td class="value-{{ 'ok' if seg.gini >= 0.35 else 'warning' if seg.gini >= 0.25 else 'critical' }}">
-                    {{ "%.4f" | format(seg.gini) }}
+                <td>Gini — {{ bmalo }}</td>
+                <td class="value-{{ 'ok' if gini_val >= 0.35 else 'warning' if gini_val >= 0.25 else 'critical' }}">
+                    {{ "%.4f" | format(gini_val) }}
                 </td>
                 <td>
-                    <span class="badge badge-{{ 'ok' if seg.gini >= 0.35 else 'warning' if seg.gini >= 0.25 else 'critical' }}">
-                        {{ 'OK' if seg.gini >= 0.35 else 'WARNING' if seg.gini >= 0.25 else 'CRITICAL' }}
+                    <span class="badge badge-{{ 'ok' if gini_val >= 0.35 else 'warning' if gini_val >= 0.25 else 'critical' }}">
+                        {{ 'OK' if gini_val >= 0.35 else 'WARNING' if gini_val >= 0.25 else 'CRITICAL' }}
                     </span>
                 </td>
-                <td>Performance con lag {{ context.lag_semanas }}s</td>
+                <td>Performance sem {{ context.performance_week }}</td>
             </tr>
             {% endif %}
-            {% if seg.ks is not none %}
+            {% endfor %}
+            {% for bmalo, ks_val in seg.ks.items() %}
+            {% if ks_val is not none %}
             <tr class="metric-row">
-                <td>KS</td>
-                <td class="value-{{ 'ok' if seg.ks >= 0.20 else 'warning' if seg.ks >= 0.15 else 'critical' }}">
-                    {{ "%.4f" | format(seg.ks) }}
+                <td>KS — {{ bmalo }}</td>
+                <td class="value-{{ 'ok' if ks_val >= 0.20 else 'warning' if ks_val >= 0.15 else 'critical' }}">
+                    {{ "%.4f" | format(ks_val) }}
                 </td>
                 <td>
-                    <span class="badge badge-{{ 'ok' if seg.ks >= 0.20 else 'warning' if seg.ks >= 0.15 else 'critical' }}">
-                        {{ 'OK' if seg.ks >= 0.20 else 'WARNING' if seg.ks >= 0.15 else 'CRITICAL' }}
+                    <span class="badge badge-{{ 'ok' if ks_val >= 0.20 else 'warning' if ks_val >= 0.15 else 'critical' }}">
+                        {{ 'OK' if ks_val >= 0.20 else 'WARNING' if ks_val >= 0.15 else 'CRITICAL' }}
                     </span>
                 </td>
-                <td>Performance con lag {{ context.lag_semanas }}s</td>
+                <td>Performance sem {{ context.performance_week }}</td>
             </tr>
             {% endif %}
+            {% endfor %}
+            {% for bmalo, n_v in seg.ordering_violations.items() %}
             <tr class="metric-row">
-                <td>Violaciones Tasa de Incumplimiento</td>
-                <td class="value-{{ 'ok' if seg.roll_forward_violations == 0 else 'warning' if seg.roll_forward_violations < 2 else 'critical' }}">
-                    {{ seg.roll_forward_violations }}
+                <td>Violaciones Orden — {{ bmalo }}</td>
+                <td class="value-{{ 'ok' if n_v == 0 else 'warning' if n_v < 2 else 'critical' }}">
+                    {{ n_v }}
                 </td>
                 <td>
-                    <span class="badge badge-{{ 'ok' if seg.roll_forward_violations == 0 else 'warning' if seg.roll_forward_violations < 2 else 'critical' }}">
-                        {{ 'OK' if seg.roll_forward_violations == 0 else 'WARNING' if seg.roll_forward_violations < 2 else 'CRITICAL' }}
+                    <span class="badge badge-{{ 'ok' if n_v == 0 else 'warning' if n_v < 2 else 'critical' }}">
+                        {{ 'OK' if n_v == 0 else 'WARNING' if n_v < 2 else 'CRITICAL' }}
                     </span>
                 </td>
                 <td>Deciles con orden incorrecto</td>
             </tr>
-            <tr class="metric-row">
-                <td>Violaciones Tasa de Cumplimiento</td>
-                <td class="value-{{ 'ok' if seg.payment_rate_violations == 0 else 'warning' if seg.payment_rate_violations < 2 else 'critical' }}">
-                    {{ seg.payment_rate_violations }}
-                </td>
-                <td>
-                    <span class="badge badge-{{ 'ok' if seg.payment_rate_violations == 0 else 'warning' if seg.payment_rate_violations < 2 else 'critical' }}">
-                        {{ 'OK' if seg.payment_rate_violations == 0 else 'WARNING' if seg.payment_rate_violations < 2 else 'CRITICAL' }}
-                    </span>
-                </td>
-                <td>Deciles con orden incorrecto</td>
-            </tr>
+            {% endfor %}
         </tbody>
     </table>
 

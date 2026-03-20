@@ -5,7 +5,7 @@ Reglas de ordenamiento:
 - Tasas de malo (incumplimiento): deben DECRECER conforme sube el score
   (bajo score = alto riesgo)
 
-check_ordering_violation(): cuenta el número de bins consecutivos donde
+check_ordering_violations(): cuenta el número de bins consecutivos donde
 la métrica viola la monotonía esperada.
 
 Tasas se calculan al vuelo: count_event_real / count_total por metric_type.
@@ -18,6 +18,9 @@ from sqlalchemy.orm import Session
 
 from mlmonitor.db.models import FactPerformanceOutcomes
 
+# Variables de performance activas del scorecard BazBoost.
+# b_malo14_26 y b_malo14_52 excluidas por inmadurez (0% de eventos en el CSV actual).
+# Esta lista es la fuente canónica — importarla donde se necesite.
 B_MALO_ACTIVE = ['b_malo2_4', 'b_malo4_6', 'b_malo8_13', 'b_malo8_16', 'first_payment_default2']
 B_MALO_PRIMARY = 'first_payment_default2'
 
@@ -135,22 +138,25 @@ def check_ordering_violations(
     return {"violations": violations, "violation_pairs": violation_pairs}
 
 
-def get_roll_forward_violations(
+def get_ordering_violations_for_metric(
     session: Session,
     model_registry_id: int,
     reference_week: date,
+    metric_type: str,
 ) -> dict:
+    """
+    Verifica si una variable b_malo viola la monotonía esperada a lo largo de los bins.
+
+    Las tasas de malo deben DECRECER conforme sube el score (bin bajo = mayor riesgo).
+
+    Args:
+        metric_type: nombre de la columna b_malo (ej: 'b_malo8_13', 'first_payment_default2')
+
+    Returns:
+        dict con violations y violation_pairs
+    """
     df = get_business_metrics_table(session, model_registry_id, reference_week)
-    col = f"{B_MALO_PRIMARY}_rate"
+    col = f"{metric_type}_rate"
     if df.empty or col not in df.columns:
         return {"violations": 0, "violation_pairs": []}
     return check_ordering_violations(df, col, ascending=False)
-
-
-def get_payment_rate_violations(
-    session: Session,
-    model_registry_id: int,
-    reference_week: date,
-) -> dict:
-    # Sin datos de tasa de cumplimiento en el CSV actual
-    return {"violations": 0, "violation_pairs": []}

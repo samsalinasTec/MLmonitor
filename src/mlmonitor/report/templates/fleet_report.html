@@ -68,6 +68,8 @@
     </thead>
     <tbody>
         {% for seg in context.segments %}
+        {% set fpd_gini = seg.gini.get('first_payment_default2') %}
+        {% set fpd_ks = seg.ks.get('first_payment_default2') %}
         <tr>
             <td><strong>{{ seg.segment_id }}</strong></td>
             <td>{{ seg.segment_description }}</td>
@@ -75,11 +77,11 @@
             <td class="value-{{ 'ok' if seg.psi_max is none or seg.psi_max < 0.10 else 'warning' if seg.psi_max < 0.20 else 'critical' }}">
                 {% if seg.psi_max is not none %}{{ "%.3f" | format(seg.psi_max) }}{% else %}—{% endif %}
             </td>
-            <td class="value-{{ 'ok' if seg.gini is none or seg.gini >= 0.35 else 'warning' if seg.gini >= 0.25 else 'critical' }}">
-                {% if seg.gini is not none %}{{ "%.3f" | format(seg.gini) }}{% else %}—{% endif %}
+            <td class="value-{{ 'ok' if fpd_gini is none or fpd_gini >= 0.35 else 'warning' if fpd_gini >= 0.25 else 'critical' }}">
+                {% if fpd_gini is not none %}{{ "%.3f" | format(fpd_gini) }}{% else %}—{% endif %}
             </td>
-            <td class="value-{{ 'ok' if seg.ks is none or seg.ks >= 0.20 else 'warning' if seg.ks >= 0.15 else 'critical' }}">
-                {% if seg.ks is not none %}{{ "%.3f" | format(seg.ks) }}{% else %}—{% endif %}
+            <td class="value-{{ 'ok' if fpd_ks is none or fpd_ks >= 0.20 else 'warning' if fpd_ks >= 0.15 else 'critical' }}">
+                {% if fpd_ks is not none %}{{ "%.3f" | format(fpd_ks) }}{% else %}—{% endif %}
             </td>
             <td>{{ seg.active_alerts | length }}</td>
         </tr>
@@ -119,22 +121,25 @@
                 <th>Estado</th>
                 <th>Alertas Activas</th>
                 <th>PSI Max</th>
-                <th>Gini</th>
-                <th>KS</th>
-                <th>Viol. Incumplimiento</th>
+                <th>Gini FPD</th>
+                <th>KS FPD</th>
+                <th>Viol. Orden (total)</th>
             </tr>
         </thead>
         <tbody>
             {% for seg in context.segments %}
+            {% set fpd_gini = seg.gini.get('first_payment_default2') %}
+            {% set fpd_ks = seg.ks.get('first_payment_default2') %}
+            {% set total_viol = seg.ordering_violations.values() | sum %}
             <tr>
                 <td class="rank-num">{{ loop.index }}</td>
                 <td><strong>{{ seg.segment_id }}</strong> — {{ seg.segment_description }}</td>
                 <td><span class="badge badge-{{ seg.overall_status | lower }}">{{ seg.overall_status }}</span></td>
                 <td>{{ seg.active_alerts | length }}</td>
                 <td>{% if seg.psi_max is not none %}{{ "%.3f" | format(seg.psi_max) }}{% else %}—{% endif %}</td>
-                <td>{% if seg.gini is not none %}{{ "%.3f" | format(seg.gini) }}{% else %}—{% endif %}</td>
-                <td>{% if seg.ks is not none %}{{ "%.3f" | format(seg.ks) }}{% else %}—{% endif %}</td>
-                <td>{{ seg.roll_forward_violations }}</td>
+                <td>{% if fpd_gini is not none %}{{ "%.3f" | format(fpd_gini) }}{% else %}—{% endif %}</td>
+                <td>{% if fpd_ks is not none %}{{ "%.3f" | format(fpd_ks) }}{% else %}—{% endif %}</td>
+                <td>{{ total_viol }}</td>
             </tr>
             {% endfor %}
         </tbody>

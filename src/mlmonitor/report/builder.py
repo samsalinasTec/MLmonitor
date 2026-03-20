@@ -20,7 +20,7 @@ from mlmonitor.db.models import (
     MetaModelRegistry,
     MetaVariables,
 )
-from mlmonitor.metrics.business_metrics import get_business_metrics_table
+from mlmonitor.metrics.business_metrics import B_MALO_ACTIVE, get_business_metrics_table
 
 LAG_WEEKS = 8
 STATUS_ORDER = {"CRITICAL": 0, "WARNING": 1, "OK": 2}
@@ -177,19 +177,19 @@ class ReportBuilder:
             psi_max = psi_max_row.metric_value
             psi_max_variable = (psi_max_row.details or {}).get("max_variable", "")
 
-        # Gini / KS
-        gini_row = metrics_dict.get("gini")
-        gini = gini_row.metric_value if gini_row else None
+        # Gini / KS / ordering violations — un valor por variable b_malo activa
+        gini: dict[str, float | None] = {}
+        ks: dict[str, float | None] = {}
+        ordering_violations: dict[str, int] = {}
+        for bmalo in B_MALO_ACTIVE:
+            gini_row = metrics_dict.get(f"gini_{bmalo}")
+            gini[bmalo] = gini_row.metric_value if gini_row else None
 
-        ks_row = metrics_dict.get("ks")
-        ks = ks_row.metric_value if ks_row else None
+            ks_row = metrics_dict.get(f"ks_{bmalo}")
+            ks[bmalo] = ks_row.metric_value if ks_row else None
 
-        # Ordering violations
-        rf_row = metrics_dict.get("roll_forward_ordering_violations")
-        rf_violations = int(rf_row.metric_value or 0) if rf_row else 0
-
-        pr_row = metrics_dict.get("payment_rate_ordering_violations")
-        pr_violations = int(pr_row.metric_value or 0) if pr_row else 0
+            ov_row = metrics_dict.get(f"ordering_violations_{bmalo}")
+            ordering_violations[bmalo] = int(ov_row.metric_value or 0) if ov_row else 0
 
         # Null rate alerts
         null_rate_alerts = []
@@ -240,8 +240,7 @@ class ReportBuilder:
             psi_max_variable=psi_max_variable,
             gini=gini,
             ks=ks,
-            roll_forward_violations=rf_violations,
-            payment_rate_violations=pr_violations,
+            ordering_violations=ordering_violations,
             null_rate_alerts=null_rate_alerts,
             active_alerts=active_alerts,
             business_table=business_table,

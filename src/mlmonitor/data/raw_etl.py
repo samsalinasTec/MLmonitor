@@ -2,7 +2,7 @@
 RawDataETL — Popula las tablas del star schema desde archivos raw del área de crédito.
 
 Fuentes:
-- variables_serc.csv: detalle de variables por solicitud de score
+- variables_serc_s32_s41.csv: detalle de variables por solicitud de score
 - muestra_weekly.csv: solicitudes con outcomes y score
 - Variables_por_segmento.xlsx: catálogo canónico de variables del scorecard
 - MetaModelRegistry.xlsx: metadata de los 11 segmentos
@@ -33,6 +33,7 @@ from mlmonitor.db.models import (
     MetaModelRegistry,
     MetaVariables,
 )
+from mlmonitor.metrics.business_metrics import B_MALO_ACTIVE
 
 logger = logging.getLogger(__name__)
 
@@ -50,8 +51,6 @@ SCORE_MIDPOINTS = [(lo + hi) // 2 for lo, hi in SCORE_BINS]
 
 MISSING_SENTINEL = -100
 NUM_BINS_NUMERIC = 10
-
-B_MALO_ACTIVE = ['b_malo2_4', 'b_malo4_6', 'b_malo8_13', 'b_malo8_16', 'first_payment_default2']
 
 
 def _semana_to_date(semana_num: int) -> date:
@@ -97,7 +96,7 @@ class RawDataETL:
     # ------------------------------------------------------------------
 
     def _load_raw_files(self) -> None:
-        serc_path = self.raw_dir / "variables_serc.csv"
+        serc_path = self.raw_dir / "variables_serc_s32_s41.csv"
         weekly_path = self.raw_dir / "muestra_weekly_S32_S41.csv"
 
         logger.info("Loading %s", serc_path)
@@ -197,14 +196,18 @@ class RawDataETL:
         return len(rows)
 
     def _populate_meta_metric_thresholds(self) -> int:
-        global_thresholds = [
+        # Thresholds base (PSI y null_rate aplican a variables de input)
+        global_thresholds: list[tuple] = [
             ("psi", 0.10, 0.20, "higher_worse"),
-            ("gini", 0.35, 0.25, "lower_worse"),
-            ("ks", 0.20, 0.15, "lower_worse"),
-            ("roll_forward_ordering_violations", 1, 2, "higher_worse"),
-            ("payment_rate_ordering_violations", 1, 2, "higher_worse"),
             ("null_rate", 0.03, 0.10, "higher_worse"),
         ]
+        # Thresholds por variable de performance — uno por cada b_malo activo
+        for bmalo in B_MALO_ACTIVE:
+            global_thresholds.extend([
+                (f"gini_{bmalo}", 0.35, 0.25, "lower_worse"),
+                (f"ks_{bmalo}", 0.20, 0.15, "lower_worse"),
+                (f"ordering_violations_{bmalo}", 1, 2, "higher_worse"),
+            ])
         rows = []
         for metric, warn, crit, direction in global_thresholds:
             rows.append(MetaMetricThresholds(

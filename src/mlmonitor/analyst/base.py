@@ -19,13 +19,12 @@ class SegmentMetrics:
     overall_status: str  # "OK" | "WARNING" | "CRITICAL"
     psi_max: float | None
     psi_max_variable: str | None
-    gini: float | None
-    ks: float | None
-    roll_forward_violations: int
-    payment_rate_violations: int
+    gini: dict            # {b_malo_col: float | None} — Gini por variable de performance
+    ks: dict              # {b_malo_col: float | None} — KS por variable de performance
+    ordering_violations: dict  # {b_malo_col: int} — violaciones de monotonía por variable
     null_rate_alerts: list[dict]  # [{"variable": str, "rate": float, "label": str}]
     active_alerts: list[dict]     # [{"metric": str, "value": float, "label": str, ...}]
-    business_table: list[dict]    # lista de deciles con roll_forward y payment_rate
+    business_table: list[dict]    # lista de deciles con tasas b_malo por score bin
 
 
 @dataclass

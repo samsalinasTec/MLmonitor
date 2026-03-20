@@ -17,9 +17,8 @@ from mlmonitor.db.models import (
     MetaVariables,
 )
 from mlmonitor.metrics.business_metrics import (
-    get_business_metrics_table,
-    get_payment_rate_violations,
-    get_roll_forward_violations,
+    B_MALO_ACTIVE,
+    get_ordering_violations_for_metric,
 )
 from mlmonitor.metrics.performance import get_gini_ks_for_segment
 from mlmonitor.metrics.psi import get_max_psi, get_null_rates, get_psi_for_all_variables
@@ -236,87 +235,67 @@ class MetricsCalculator:
                     calculated_from="FACT_DISTRIBUTIONS",
                 ))
 
-        # --- Gini y KS (pre-labeled, sin lag adicional) ---
-        perf_metrics = get_gini_ks_for_segment(
-            self.session, model_registry_id, performance_week,
-            metric_type="first_payment_default2",
-        )
-        if perf_metrics.get("gini") is not None:
-            _, label = self.evaluator.evaluate("gini", perf_metrics["gini"], model_registry_id)
-            metric_id = self.evaluator.get_metric_id("gini")
+        # --- Gini, KS y violaciones de ordering — una entrada por variable b_malo ---
+        for bmalo in B_MALO_ACTIVE:
+            perf_metrics = get_gini_ks_for_segment(
+                self.session, model_registry_id, performance_week,
+                metric_type=bmalo,
+            )
+
+            if perf_metrics.get("gini") is not None:
+                mname = f"gini_{bmalo}"
+                _, label = self.evaluator.evaluate(mname, perf_metrics["gini"], model_registry_id)
+                metric_id = self.evaluator.get_metric_id(mname)
+                if metric_id is not None:
+                    rows.append(FactMetricsHistory(
+                        model_registry_id=model_registry_id,
+                        variable_id=None,
+                        calculation_week=current_week,
+                        metric_id=metric_id,
+                        metric_value=perf_metrics["gini"],
+                        alert_label=label,
+                        details={"performance_week": performance_week.isoformat(), "bmalo": bmalo},
+                        calculated_from="FACT_PERFORMANCE_OUTCOMES",
+                    ))
+
+            if perf_metrics.get("ks") is not None:
+                mname = f"ks_{bmalo}"
+                _, label = self.evaluator.evaluate(mname, perf_metrics["ks"], model_registry_id)
+                metric_id = self.evaluator.get_metric_id(mname)
+                if metric_id is not None:
+                    rows.append(FactMetricsHistory(
+                        model_registry_id=model_registry_id,
+                        variable_id=None,
+                        calculation_week=current_week,
+                        metric_id=metric_id,
+                        metric_value=perf_metrics["ks"],
+                        alert_label=label,
+                        details={"performance_week": performance_week.isoformat(), "bmalo": bmalo},
+                        calculated_from="FACT_PERFORMANCE_OUTCOMES",
+                    ))
+
+            violations = get_ordering_violations_for_metric(
+                self.session, model_registry_id, performance_week, metric_type=bmalo
+            )
+            n_v = violations.get("violations", 0)
+            mname = f"ordering_violations_{bmalo}"
+            _, label = self.evaluator.evaluate(mname, n_v, model_registry_id)
+            metric_id = self.evaluator.get_metric_id(mname)
             if metric_id is not None:
                 rows.append(FactMetricsHistory(
                     model_registry_id=model_registry_id,
                     variable_id=None,
                     calculation_week=current_week,
                     metric_id=metric_id,
-                    metric_value=perf_metrics["gini"],
+                    metric_value=float(n_v),
                     alert_label=label,
-                    details={"performance_week": performance_week.isoformat()},
+                    details={
+                        "performance_week": performance_week.isoformat(),
+                        "bmalo": bmalo,
+                        "violation_pairs": violations.get("violation_pairs", []),
+                    },
                     calculated_from="FACT_PERFORMANCE_OUTCOMES",
                 ))
-
-        if perf_metrics.get("ks") is not None:
-            _, label = self.evaluator.evaluate("ks", perf_metrics["ks"], model_registry_id)
-            metric_id = self.evaluator.get_metric_id("ks")
-            if metric_id is not None:
-                rows.append(FactMetricsHistory(
-                    model_registry_id=model_registry_id,
-                    variable_id=None,
-                    calculation_week=current_week,
-                    metric_id=metric_id,
-                    metric_value=perf_metrics["ks"],
-                    alert_label=label,
-                    details={"performance_week": performance_week.isoformat()},
-                    calculated_from="FACT_PERFORMANCE_OUTCOMES",
-                ))
-
-        # --- Violaciones de ordering (con lag) ---
-        rf_violations = get_roll_forward_violations(
-            self.session, model_registry_id, performance_week
-        )
-        n_rf = rf_violations.get("violations", 0)
-        _, label = self.evaluator.evaluate(
-            "roll_forward_ordering_violations", n_rf, model_registry_id
-        )
-        metric_id = self.evaluator.get_metric_id("roll_forward_ordering_violations")
-        if metric_id is not None:
-            rows.append(FactMetricsHistory(
-                model_registry_id=model_registry_id,
-                variable_id=None,
-                calculation_week=current_week,
-                metric_id=metric_id,
-                metric_value=float(n_rf),
-                alert_label=label,
-                details={
-                    "performance_week": performance_week.isoformat(),
-                    "violation_pairs": rf_violations.get("violation_pairs", []),
-                },
-                calculated_from="FACT_PERFORMANCE_OUTCOMES",
-            ))
-
-        pr_violations = get_payment_rate_violations(
-            self.session, model_registry_id, performance_week
-        )
-        n_pr = pr_violations.get("violations", 0)
-        _, label = self.evaluator.evaluate(
-            "payment_rate_ordering_violations", n_pr, model_registry_id
-        )
-        metric_id = self.evaluator.get_metric_id("payment_rate_ordering_violations")
-        if metric_id is not None:
-            rows.append(FactMetricsHistory(
-                model_registry_id=model_registry_id,
-                variable_id=None,
-                calculation_week=current_week,
-                metric_id=metric_id,
-                metric_value=float(n_pr),
-                alert_label=label,
-                details={
-                    "performance_week": performance_week.isoformat(),
-                    "violation_pairs": pr_violations.get("violation_pairs", []),
-                },
-                calculated_from="FACT_PERFORMANCE_OUTCOMES",
-            ))
 
         return rows
 

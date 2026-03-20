@@ -19,7 +19,7 @@ Analiza el siguiente reporte de monitoreo de flota de scorecards y genera un res
 - ID: {{ model_id }}
 - Nombre: {{ model_name }}
 - Semana de cálculo: {{ calculation_week }}
-- Semana de performance (con lag {{ lag_semanas }}s): {{ performance_week }}
+- Semana de performance: {{ performance_week }}
 
 ## ESTADO GENERAL DE LA FLOTA
 - Total de sub-scorecards: {{ fleet_summary.total }}
@@ -31,10 +31,9 @@ Analiza el siguiente reporte de monitoreo de flota de scorecards y genera un res
 {% for seg in segments %}
 ### {{ seg.segment_id }} — {{ seg.segment_description }} [{{ seg.overall_status }}]
 {% if seg.psi_max is not none %}- PSI máximo: {{ "%.3f"|format(seg.psi_max) }} en variable '{{ seg.psi_max_variable }}'{% endif %}
-{% if seg.gini is not none %}- Gini: {{ "%.3f"|format(seg.gini) }} (datos con {{ lag_semanas }} semanas de lag){% endif %}
-{% if seg.ks is not none %}- KS: {{ "%.3f"|format(seg.ks) }}{% endif %}
-{% if seg.roll_forward_violations > 0 %}- Tasa de Incumplimiento: {{ seg.roll_forward_violations }} violaciones de ordenamiento{% endif %}
-{% if seg.payment_rate_violations > 0 %}- Tasa de Cumplimiento: {{ seg.payment_rate_violations }} violaciones de ordenamiento{% endif %}
+{% for bmalo, gini_val in seg.gini.items() %}{% if gini_val is not none %}- Gini ({{ bmalo }}): {{ "%.3f"|format(gini_val) }}{% endif %}{% endfor %}
+{% for bmalo, ks_val in seg.ks.items() %}{% if ks_val is not none %}- KS ({{ bmalo }}): {{ "%.3f"|format(ks_val) }}{% endif %}{% endfor %}
+{% for bmalo, n_v in seg.ordering_violations.items() %}{% if n_v > 0 %}- Violaciones orden {{ bmalo }}: {{ n_v }}{% endif %}{% endfor %}
 {% for alert in seg.null_rate_alerts %}- Tasa de nulos [{{ alert.label }}] en '{{ alert.variable }}': {{ "%.1f"|format(alert.rate * 100) }}%{% endfor %}
 {% endfor %}
 
@@ -42,12 +41,12 @@ Analiza el siguiente reporte de monitoreo de flota de scorecards y genera un res
 Genera un párrafo ejecutivo de 4-6 oraciones que:
 1. Describa el estado general de la flota
 2. Identifique los 2-3 segmentos más críticos y por qué
-3. Mencione el lag estructural de {{ lag_semanas }} semanas en las métricas de performance (Gini/KS)
+3. Mencione la fecha de performance efectiva al hablar de Gini/KS (datos pre-etiquetados)
 4. Indique la tendencia general (estable, deteriorándose, mejorando)
 
 IMPORTANTE:
 - NO menciones F1-score, precision, recall ni AUC binario
-- USA los términos: Gini, KS, PSI, Tasa de Incumplimiento, Tasa de Cumplimiento
+- USA los términos: Gini, KS, PSI, Tasa de Incumplimiento (b_malo)
 - Escribe en español técnico para un equipo de analytics
 
 Responde ÚNICAMENTE con el párrafo ejecutivo, sin encabezados adicionales.
@@ -60,8 +59,7 @@ Analiza el siguiente segmento y genera un análisis detallado en español.
 ## CONTEXTO GENERAL
 - Modelo: {{ model_id }} — {{ model_name }}
 - Semana de cálculo: {{ calculation_week }}
-- Las métricas de performance (Gini, KS, Tasa de Incumplimiento) tienen un lag estructural de {{ lag_semanas }} semanas
-- Semana de performance efectiva: {{ performance_week }}
+- Semana de performance (datos pre-etiquetados): {{ performance_week }}
 
 ## SEGMENTO: {{ segment_id }} — {{ segment_description }}
 ### Estado general: {{ overall_status }}
@@ -71,16 +69,15 @@ Analiza el siguiente segmento y genera un análisis detallado en español.
   - (< 0.10 OK | 0.10-0.20 WARNING | > 0.20 CRÍTICO){% endif %}
 {% for alert in null_rate_alerts %}- Tasa de nulos [{{ alert.label }}] en '{{ alert.variable }}': {{ "%.1f"|format(alert.rate * 100) }}%{% endfor %}
 
-### Métricas de performance (con {{ lag_semanas }} semanas de lag)
-{% if gini is not none %}- Gini: {{ "%.3f"|format(gini) }} (capacidad discriminativa del modelo){% endif %}
-{% if ks is not none %}- KS: {{ "%.3f"|format(ks) }} (separación máxima de distribuciones){% endif %}
-{% if roll_forward_violations > 0 %}- Tasa de Incumplimiento: {{ roll_forward_violations }} violación(es) de ordenamiento (score bajo = mayor incumplimiento){% endif %}
-{% if payment_rate_violations > 0 %}- Tasa de Cumplimiento: {{ payment_rate_violations }} violación(es) de ordenamiento (score alto = mayor cumplimiento){% endif %}
+### Métricas de performance por variable de outcome
+{% for bmalo, gini_val in gini.items() %}{% if gini_val is not none %}- Gini ({{ bmalo }}): {{ "%.3f"|format(gini_val) }} (capacidad discriminativa){% endif %}{% endfor %}
+{% for bmalo, ks_val in ks.items() %}{% if ks_val is not none %}- KS ({{ bmalo }}): {{ "%.3f"|format(ks_val) }} (separación máxima de distribuciones){% endif %}{% endfor %}
+{% for bmalo, n_v in ordering_violations.items() %}{% if n_v > 0 %}- Violaciones de orden {{ bmalo }}: {{ n_v }} bin(s) fuera de secuencia{% endif %}{% endfor %}
 
 ### Tabla de negocio por decil (score ascendente = menor riesgo)
-| Score Bin | Tasa Incumplimiento | Tasa Cumplimiento |
-|-----------|---------------------|-------------------|
-{% for row in business_table %}| {{ row.score_bin }} | {{ "%.1f"|format((row.roll_forward_rate or 0) * 100) }}% | {{ "%.1f"|format((row.payment_rate or 0) * 100) }}% |
+| Score Bin | FPD (%) | Malo 2-4 (%) | Malo 8-13 (%) |
+|-----------|---------|--------------|---------------|
+{% for row in business_table %}| {{ row.score_bin }} | {{ "%.1f"|format((row.first_payment_default2_rate or 0) * 100) }}% | {{ "%.1f"|format((row.b_malo2_4_rate or 0) * 100) }}% | {{ "%.1f"|format((row.b_malo8_13_rate or 0) * 100) }}% |
 {% endfor %}
 
 ### Alertas activas
@@ -91,7 +88,7 @@ Genera:
 
 **ANÁLISIS** (3-4 oraciones):
 Describe el estado del segmento, las causas probables de las alertas y el impacto en el negocio.
-Menciona el lag de {{ lag_semanas }} semanas si hablas de Gini/KS/Tasa de Incumplimiento.
+Menciona la semana de performance {{ performance_week }} al hablar de Gini/KS/Tasas de incumplimiento.
 
 **ACCIONES RECOMENDADAS** (3-5 acciones, formato JSON):
 ```json
@@ -106,7 +103,7 @@ Menciona el lag de {{ lag_semanas }} semanas si hablas de Gini/KS/Tasa de Incump
 
 IMPORTANTE:
 - NO menciones F1-score, precision, recall ni AUC binario
-- USA los términos: Gini, KS, PSI, Tasa de Incumplimiento, Tasa de Cumplimiento
+- USA los términos: Gini, KS, PSI, Tasa de Incumplimiento (b_malo)
 - Las acciones deben ser concretas y accionables
 - Si hay violaciones de ordering, menciona qué bins están involucrados
 """

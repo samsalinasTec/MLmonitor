@@ -1,9 +1,12 @@
 """
-Métricas de negocio: tasas B_MALO por decil de score.
+Métricas de negocio: tasas de target por decil de score.
 
 Reglas de ordenamiento:
 - Tasas de malo (incumplimiento): deben DECRECER conforme sube el score
   (bajo score = alto riesgo)
+- Tasas de pago: deben CRECER conforme sube el score
+
+La dirección esperada se lee de MetaVariables.ascending_order por target.
 
 check_ordering_violations(): cuenta el número de bins consecutivos donde
 la métrica viola la monotonía esperada.
@@ -16,41 +19,47 @@ from datetime import date
 import pandas as pd
 from sqlalchemy.orm import Session
 
-from mlmonitor.db.models import FactPerformanceOutcomes
-
-# Variables de performance activas del scorecard BazBoost.
-# b_malo14_26 y b_malo14_52 excluidas por inmadurez (0% de eventos en el CSV actual).
-# Esta lista es la fuente canónica — importarla donde se necesite.
-B_MALO_ACTIVE = ['b_malo2_4', 'b_malo4_6', 'b_malo8_13', 'b_malo8_16', 'first_payment_default2']
-B_MALO_PRIMARY = 'first_payment_default2'
+from mlmonitor.db.models import FactPerformanceOutcomes, MetaVariables
 
 
 def get_business_metrics_table(
     session: Session,
     model_registry_id: int,
-    reference_week: date,
-    lag_weeks: int = 8,
+    score_week: date,
 ) -> pd.DataFrame:
     """
     Retorna tabla de métricas de negocio por decil ordenada por score ascendente.
+    Los targets y sus columnas se determinan dinámicamente desde META_VARIABLES.
 
     Args:
         model_registry_id: ID surrogado del registro del modelo (segmento)
-        reference_week: semana en que se generó el score (date_score_key)
-        lag_weeks: no usado (mantenido para compatibilidad de firma — datos pre-labeled)
+        score_week: semana en que se generó el score (date_score_key)
 
     Returns:
         DataFrame con columnas: score_bin, score_midpoint, count_total,
-        b_malo2_4_rate, b_malo4_6_rate, b_malo8_13_rate, b_malo8_16_rate,
-        first_payment_default2_rate
+        {target_name}_rate por cada variable target activa.
     """
+    targets = (
+        session.query(MetaVariables)
+        .filter(
+            MetaVariables.model_registry_id == model_registry_id,
+            MetaVariables.variable_rol == "target",
+            MetaVariables.valid_to.is_(None),
+        )
+        .all()
+    )
+
+    if not targets:
+        return pd.DataFrame()
+
+    target_names = [t.variable_name for t in targets]
+
     rows = (
         session.query(FactPerformanceOutcomes)
         .filter(
             FactPerformanceOutcomes.model_registry_id == model_registry_id,
-            FactPerformanceOutcomes.date_score_key == reference_week,
-            FactPerformanceOutcomes.date_outcome_key == reference_week,
-            FactPerformanceOutcomes.metric_type.in_(B_MALO_ACTIVE),
+            FactPerformanceOutcomes.date_score_key == score_week,
+            FactPerformanceOutcomes.metric_type.in_(target_names),
         )
         .order_by(FactPerformanceOutcomes.score_midpoint)
         .all()
@@ -59,7 +68,6 @@ def get_business_metrics_table(
     if not rows:
         return pd.DataFrame()
 
-    # Agrupar por score_bin y construir columnas por b_malo var
     by_bin: dict[str, dict] = {}
     for r in rows:
         key = r.score_bin
@@ -69,8 +77,8 @@ def get_business_metrics_table(
                 "score_midpoint": r.score_midpoint or 0,
                 "count_total": r.count_total or 0,
             }
-            for col in B_MALO_ACTIVE:
-                by_bin[key][f"{col}_rate"] = None
+            for tname in target_names:
+                by_bin[key][f"{tname}_rate"] = None
 
         total = r.count_total or 0
         rate = (r.count_event_real / total) if total else None
@@ -93,8 +101,8 @@ def check_ordering_violations(
     Args:
         df: DataFrame con score_midpoint y la métrica
         metric_col: nombre de la columna de la métrica
-        ascending: True si la métrica debe crecer con el score (PaymentRate)
-                   False si debe decrecer (RollForward)
+        ascending: True si la métrica debe crecer con el score
+                   False si debe decrecer (b_malo)
 
     Returns:
         dict con:
@@ -115,8 +123,8 @@ def check_ordering_violations(
             continue
 
         if ascending:
-            # PaymentRate debe crecer: v_j >= v_i
-            if v_j < v_i - 0.005:  # tolerancia pequeña
+            # FirstPaymentDefault2 debe crecer: v_j >= v_i
+            if v_j < v_i - 0.005:
                 violations += 1
                 violation_pairs.append({
                     "bin_low": bins[i],
@@ -125,8 +133,8 @@ def check_ordering_violations(
                     "value_high_score_bin": round(v_j, 4),
                 })
         else:
-            # RollForward debe decrecer: v_j <= v_i
-            if v_j > v_i + 0.005:  # tolerancia pequeña
+            #  b_malo debe decrecer: v_j <= v_i
+            if v_j > v_i + 0.005:
                 violations += 1
                 violation_pairs.append({
                     "bin_low": bins[i],
@@ -141,22 +149,23 @@ def check_ordering_violations(
 def get_ordering_violations_for_metric(
     session: Session,
     model_registry_id: int,
-    reference_week: date,
+    score_week: date,
     metric_type: str,
+    ascending: bool = False,
 ) -> dict:
     """
-    Verifica si una variable b_malo viola la monotonía esperada a lo largo de los bins.
-
-    Las tasas de malo deben DECRECER conforme sube el score (bin bajo = mayor riesgo).
+    Verifica si una variable target viola la monotonía esperada a lo largo de los bins.
 
     Args:
-        metric_type: nombre de la columna b_malo (ej: 'b_malo8_13', 'first_payment_default2')
+        score_week: date_score_key (semana en que se generó el score)
+        metric_type: nombre del target (ej: 'b_malo8_13', 'first_payment_default2')
+        ascending: True si debe crecer con score, False si debe decrecer (default)
 
     Returns:
         dict con violations y violation_pairs
     """
-    df = get_business_metrics_table(session, model_registry_id, reference_week)
+    df = get_business_metrics_table(session, model_registry_id, score_week)
     col = f"{metric_type}_rate"
     if df.empty or col not in df.columns:
         return {"violations": 0, "violation_pairs": []}
-    return check_ordering_violations(df, col, ascending=False)
+    return check_ordering_violations(df, col, ascending=ascending)

@@ -33,7 +33,6 @@ from mlmonitor.db.models import (
     MetaModelRegistry,
     MetaVariables,
 )
-from mlmonitor.metrics.business_metrics import B_MALO_ACTIVE
 
 logger = logging.getLogger(__name__)
 
@@ -51,6 +50,17 @@ SCORE_MIDPOINTS = [(lo + hi) // 2 for lo, hi in SCORE_BINS]
 
 MISSING_SENTINEL = -100
 NUM_BINS_NUMERIC = 10
+
+# Fuente de verdad para el bootstrap de targets de BazBoost.
+# Al agregar un nuevo modelo, solo se modifica esta estructura; el resto
+# del sistema lee desde META_VARIABLES en la DB.
+TARGET_VARIABLES: dict[str, dict] = {
+    'b_malo2_4':              {'lag_semanas': 4,  'ascending_order': False},
+    'b_malo4_6':              {'lag_semanas': 6,  'ascending_order': False},
+    'b_malo8_13':             {'lag_semanas': 8,  'ascending_order': False},
+    'b_malo8_16':             {'lag_semanas': 16, 'ascending_order': False},
+    'first_payment_default2': {'lag_semanas': 2,  'ascending_order': False},
+}
 
 
 def _semana_to_date(semana_num: int) -> date:
@@ -154,6 +164,7 @@ class RawDataETL:
             reg_id = self._registry_map[submodel_id]
             canonical_vars = CANONICAL_VARIABLES.get(seg_id, [])
 
+            # Variables de input
             for vname in canonical_vars:
                 vtype = "categorical" if vname == "fisexo" else "numeric"
                 rows.append(MetaVariables(
@@ -161,6 +172,8 @@ class RawDataETL:
                     variable_name=vname,
                     variable_type=vtype,
                     variable_rol="input",
+                    lag_semanas=None,
+                    ascending_order=None,
                     description=None,
                     woe_categories=None,
                     binning_rules={"type": "quantile", "n_bins": NUM_BINS_NUMERIC} if vtype == "numeric" else None,
@@ -169,11 +182,14 @@ class RawDataETL:
                     valid_to=None,
                 ))
 
+            # Variable de output: score
             rows.append(MetaVariables(
                 model_registry_id=reg_id,
                 variable_name="score",
                 variable_type="numeric",
                 variable_rol="output",
+                lag_semanas=None,
+                ascending_order=None,
                 description="Puntaje total del scorecard",
                 woe_categories=None,
                 binning_rules={"type": "fixed_cuts", "cuts": [0, 100, 200, 300, 400, 500, 600, 700, 800, 900, 1000]},
@@ -182,6 +198,23 @@ class RawDataETL:
                 valid_to=None,
             ))
 
+            # Variables target — fuente de verdad para el modelo BazBoost
+            for tname, tparams in TARGET_VARIABLES.items():
+                rows.append(MetaVariables(
+                    model_registry_id=reg_id,
+                    variable_name=tname,
+                    variable_type="numeric",
+                    variable_rol="target",
+                    lag_semanas=tparams["lag_semanas"],
+                    ascending_order=tparams["ascending_order"],
+                    description=None,
+                    woe_categories=None,
+                    binning_rules=None,
+                    source_table=None,
+                    valid_from=date(2023, 1, 1),
+                    valid_to=None,
+                ))
+
         self.session.add_all(rows)
         self.session.flush()
 
@@ -189,8 +222,9 @@ class RawDataETL:
             submodel_id = next(k for k, v in self._registry_map.items() if v == r.model_registry_id)
             if r.variable_rol == "output" and r.variable_name == "score":
                 self._score_var_map[submodel_id] = r.id
-            else:
+            elif r.variable_rol == "input":
                 self._variable_map[(submodel_id, r.variable_name)] = r.id
+            # targets: no tienen distribuciones, no se agregan a _variable_map
 
         logger.info("META_VARIABLES: %d rows", len(rows))
         return len(rows)
@@ -201,12 +235,12 @@ class RawDataETL:
             ("psi", 0.10, 0.20, "higher_worse"),
             ("null_rate", 0.03, 0.10, "higher_worse"),
         ]
-        # Thresholds por variable de performance — uno por cada b_malo activo
-        for bmalo in B_MALO_ACTIVE:
+        # Thresholds por variable target — uno por cada target activo
+        for tname in TARGET_VARIABLES:
             global_thresholds.extend([
-                (f"gini_{bmalo}", 0.35, 0.25, "lower_worse"),
-                (f"ks_{bmalo}", 0.20, 0.15, "lower_worse"),
-                (f"ordering_violations_{bmalo}", 1, 2, "higher_worse"),
+                (f"gini_{tname}", 0.35, 0.25, "lower_worse"),
+                (f"ks_{tname}", 0.20, 0.15, "lower_worse"),
+                (f"ordering_violations_{tname}", 1, 2, "higher_worse"),
             ])
         rows = []
         for metric, warn, crit, direction in global_thresholds:
@@ -274,29 +308,40 @@ class RawDataETL:
     def _bin_numeric(
         self, grp: pd.DataFrame, reg_id: int, var_id: int
     ) -> list[FactDistributions]:
-        """Bin a numeric variable group by week using quantile bins.
+        """Bin a numeric variable using fixed cuts computed from the reference (earliest) week.
 
-        Bin edges are computed from the full dataset (all weeks) so PSI
-        comparisons across weeks use a consistent reference frame.
-        Labels use ``bin_1`` .. ``bin_N`` to guarantee uniqueness.
+        Bin edges are computed from the reference week only and persisted to
+        META_VARIABLES.binning_rules so PSI comparisons across weeks use a
+        consistent reference frame. Labels use ``bin_1`` .. ``bin_N``.
         """
         rows = []
-        valid_values = grp.loc[
-            grp["fcvalor_variable"].notna() & (grp["fcvalor_variable"] != MISSING_SENTINEL),
+
+        # 1. Identify reference week (earliest week in data for this variable)
+        reference_week = grp["_reference_week"].dropna().min()
+        ref_grp = grp[grp["_reference_week"] == reference_week]
+        ref_valid = ref_grp.loc[
+            ref_grp["fcvalor_variable"].notna() & (ref_grp["fcvalor_variable"] != MISSING_SENTINEL),
             "fcvalor_variable",
         ]
 
-        if valid_values.empty:
+        if ref_valid.empty:
             return rows
 
+        # 2. Compute bin edges from reference week only
         try:
-            _, bin_edges = pd.qcut(valid_values, q=NUM_BINS_NUMERIC, retbins=True, duplicates="drop")
+            _, bin_edges = pd.qcut(ref_valid, q=NUM_BINS_NUMERIC, retbins=True, duplicates="drop")
         except ValueError:
-            _, bin_edges = pd.cut(valid_values, bins=NUM_BINS_NUMERIC, retbins=True)
+            _, bin_edges = pd.cut(ref_valid, bins=NUM_BINS_NUMERIC, retbins=True)
+
+        # 3. Persist fixed cuts to META_VARIABLES.binning_rules
+        cuts = [round(float(e), 6) for e in bin_edges]
+        var_row = self.session.get(MetaVariables, var_id)
+        if var_row is not None:
+            var_row.binning_rules = {"type": "fixed_cuts", "cuts": cuts}
 
         n_bins = len(bin_edges) - 1
-        first_week = grp["_reference_week"].dropna().min()
 
+        # 4. Apply fixed cuts to ALL weeks (values outside range clip to first/last bin)
         for ref_week, week_grp in grp.groupby("_reference_week"):
             vals = week_grp["fcvalor_variable"]
             total_records = len(vals)
@@ -307,7 +352,7 @@ class RawDataETL:
                 continue
 
             bin_indices = np.digitize(clean.values, bin_edges[1:-1])
-            reference_flag = 1 if ref_week == first_week else 0
+            reference_flag = 1 if ref_week == reference_week else 0
 
             for bin_idx in range(n_bins):
                 label = f"bin_{bin_idx + 1}"
@@ -331,17 +376,33 @@ class RawDataETL:
     def _bin_categorical(
         self, grp: pd.DataFrame, reg_id: int, var_id: int
     ) -> list[FactDistributions]:
-        """Bin a categorical variable by its distinct values per week."""
+        """Bin a categorical variable using categories from the reference (earliest) week.
+
+        Categories are computed from reference week only and persisted to
+        META_VARIABLES.woe_categories. Subsequent weeks use those fixed categories
+        (missing ones get count=0; new unseen categories go to '__other__').
+        """
         rows = []
-        first_week = grp["_reference_week"].dropna().min()
+
+        # 1. Identify reference week and compute canonical category list
+        reference_week = grp["_reference_week"].dropna().min()
+        ref_grp = grp[grp["_reference_week"] == reference_week]
+        ref_categories = list(ref_grp["fcvalor_variable"].astype(str).value_counts().index)
+
+        # 2. Persist to META_VARIABLES.woe_categories
+        var_row = self.session.get(MetaVariables, var_id)
+        if var_row is not None:
+            var_row.woe_categories = ref_categories
+
+        # 3. For each week, use reference categories (fill missing with 0; new → __other__)
         for ref_week, week_grp in grp.groupby("_reference_week"):
             vals = week_grp["fcvalor_variable"].astype(str)
             total_records = len(vals)
             null_count = int(week_grp["fcvalor_variable"].isna().sum())
-            counts = vals.value_counts()
-            reference_flag = 1 if ref_week == first_week else 0
+            reference_flag = 1 if ref_week == reference_week else 0
 
-            for cat_val, count in counts.items():
+            for cat_val in ref_categories:
+                count = int((vals == cat_val).sum())
                 pct = count / total_records if total_records > 0 else 0.0
                 rows.append(FactDistributions(
                     model_registry_id=reg_id,
@@ -349,9 +410,26 @@ class RawDataETL:
                     reference_week=ref_week,
                     reference_flag=reference_flag,
                     bin_label=str(cat_val),
-                    bin_count=int(count),
+                    bin_count=count,
                     bin_percentage=round(pct, 6),
                     null_count=null_count,
+                    sum_value=None,
+                    total_records=total_records,
+                ))
+
+            # Categories not seen in reference week go to "__other__"
+            other_vals = vals[~vals.isin(ref_categories)]
+            if len(other_vals) > 0:
+                other_count = len(other_vals)
+                rows.append(FactDistributions(
+                    model_registry_id=reg_id,
+                    variable_id=var_id,
+                    reference_week=ref_week,
+                    reference_flag=0,
+                    bin_label="__other__",
+                    bin_count=other_count,
+                    bin_percentage=round(other_count / total_records, 6),
+                    null_count=0,
                     sum_value=None,
                     total_records=total_records,
                 ))
@@ -464,17 +542,20 @@ class RawDataETL:
                 count_total = len(bin_grp)
                 midpoint = bin_grp["_midpoint"].iloc[0] if len(bin_grp) > 0 else None
 
-                for bmalo_col in B_MALO_ACTIVE:
-                    if bmalo_col not in bin_grp.columns:
+                for tname, tparams in TARGET_VARIABLES.items():
+                    if tname not in bin_grp.columns:
                         continue
-                    valid = bin_grp[bmalo_col].dropna()
+                    valid = bin_grp[tname].dropna()
                     count_event_real = int(valid.sum()) if not valid.empty else 0
+
+                    # date_outcome_key = score_date + lag (cada target tiene su propio lag)
+                    date_outcome_key = date_score_key + timedelta(weeks=tparams["lag_semanas"])
 
                     all_rows.append(FactPerformanceOutcomes(
                         model_registry_id=reg_id,
                         date_score_key=date_score_key,
-                        date_outcome_key=date_score_key,
-                        metric_type=bmalo_col,
+                        date_outcome_key=date_outcome_key,
+                        metric_type=tname,
                         score_bin=str(score_bin),
                         score_midpoint=int(midpoint) if midpoint is not None else None,
                         count_total=count_total,

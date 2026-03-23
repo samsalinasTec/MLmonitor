@@ -1,9 +1,11 @@
 """
 MetricsCalculator — Orquestador: lee FACTs → calcula métricas → escribe FACT_METRICS_HISTORY.
 
-Maneja dos ejes temporales:
+Maneja dos ejes temporales por target:
 - current_week: PSI/drift — usa distribuciones de la semana actual
-- performance_week = current_week - 8 semanas: Gini/KS/RollForward
+- score_week = current_week - target.lag_semanas: Gini/KS/ordering violations
+
+El lag es por variable target; se lee desde META_VARIABLES.lag_semanas.
 """
 
 from datetime import date, timedelta
@@ -16,14 +18,9 @@ from mlmonitor.db.models import (
     MetaModelRegistry,
     MetaVariables,
 )
-from mlmonitor.metrics.business_metrics import (
-    B_MALO_ACTIVE,
-    get_ordering_violations_for_metric,
-)
+from mlmonitor.metrics.business_metrics import get_ordering_violations_for_metric
 from mlmonitor.metrics.performance import get_gini_ks_for_segment
 from mlmonitor.metrics.psi import get_max_psi, get_null_rates, get_psi_for_all_variables
-
-LAG_WEEKS = 8
 
 _LABEL_TO_FLAG = {"OK": 0, "WARNING": 1, "CRITICAL": 2}
 
@@ -45,7 +42,6 @@ class AlertEvaluator:
         for r in rows:
             key = (r.metric_name, r.model_registry_id)  # model_registry_id es None para globales
             self._thresholds_cache[key] = r
-            # Construir mapa de nombre → id (solo si no existe ya)
             if r.metric_name not in self._metric_map:
                 self._metric_map[r.metric_name] = r.id
 
@@ -109,9 +105,6 @@ class MetricsCalculator:
         y las escribe en FACT_METRICS_HISTORY.
         Retorna las filas insertadas.
         """
-        performance_week = current_week - timedelta(weeks=LAG_WEEKS)
-
-        # Obtener segmentos activos del modelo
         segments = (
             self.session.query(MetaModelRegistry)
             .filter(
@@ -125,9 +118,8 @@ class MetricsCalculator:
 
         for seg in segments:
             model_registry_id = seg.id
-            submodel_id = seg.submodel_id
 
-            # Cargar variables del segmento: {var_id: var_name}
+            # Cargar todas las variables del segmento
             var_rows = (
                 self.session.query(MetaVariables)
                 .filter(
@@ -136,13 +128,16 @@ class MetricsCalculator:
                 )
                 .all()
             )
-            variable_map = {v.id: v.variable_name for v in var_rows}
+
+            # Separar inputs/outputs (para PSI/null_rate) de targets (para Gini/KS/violations)
+            variable_map = {v.id: v.variable_name for v in var_rows if v.variable_rol != "target"}
+            target_vars = [v for v in var_rows if v.variable_rol == "target"]
 
             rows = self._calculate_segment_metrics(
                 model_registry_id=model_registry_id,
                 variable_map=variable_map,
+                target_vars=target_vars,
                 current_week=current_week,
-                performance_week=performance_week,
             )
             all_rows.extend(rows)
 
@@ -173,15 +168,15 @@ class MetricsCalculator:
         self,
         model_registry_id: int,
         variable_map: dict[int, str],
+        target_vars: list[MetaVariables],
         current_week: date,
-        performance_week: date,
     ) -> list[FactMetricsHistory]:
         rows = []
 
         # Invertir para lookup var_name → var_id
         name_to_id = {v: k for k, v in variable_map.items()}
 
-        # --- PSI por variable ---
+        # --- PSI por variable (solo inputs/outputs) ---
         psi_by_var = get_psi_for_all_variables(
             self.session, model_registry_id, variable_map, current_week
         )
@@ -208,7 +203,7 @@ class MetricsCalculator:
         if metric_id is not None:
             rows.append(FactMetricsHistory(
                 model_registry_id=model_registry_id,
-                variable_id=None,  # métrica de segmento, no de variable específica
+                variable_id=None,
                 calculation_week=current_week,
                 metric_id=metric_id,
                 metric_value=round(max_psi, 4),
@@ -217,7 +212,7 @@ class MetricsCalculator:
                 calculated_from="FACT_DISTRIBUTIONS",
             ))
 
-        # --- Tasas de nulos ---
+        # --- Tasas de nulos (solo inputs) ---
         null_rates = get_null_rates(self.session, model_registry_id, variable_map, current_week)
         null_metric_id = self.evaluator.get_metric_id("null_rate")
         for vname, null_rate in null_rates.items():
@@ -235,15 +230,21 @@ class MetricsCalculator:
                     calculated_from="FACT_DISTRIBUTIONS",
                 ))
 
-        # --- Gini, KS y violaciones de ordering — una entrada por variable b_malo ---
-        for bmalo in B_MALO_ACTIVE:
+        # --- Gini, KS y violaciones de ordering — una entrada por variable target ---
+        for target in target_vars:
+            tname = target.variable_name
+            lag = target.lag_semanas or 8
+            score_week = current_week - timedelta(weeks=lag)
+            ascending = target.ascending_order if target.ascending_order is not None else False
+
             perf_metrics = get_gini_ks_for_segment(
-                self.session, model_registry_id, performance_week,
-                metric_type=bmalo,
+                self.session, model_registry_id, score_week,
+                metric_type=tname,
+                lag_semanas=lag,
             )
 
             if perf_metrics.get("gini") is not None:
-                mname = f"gini_{bmalo}"
+                mname = f"gini_{tname}"
                 _, label = self.evaluator.evaluate(mname, perf_metrics["gini"], model_registry_id)
                 metric_id = self.evaluator.get_metric_id(mname)
                 if metric_id is not None:
@@ -254,12 +255,12 @@ class MetricsCalculator:
                         metric_id=metric_id,
                         metric_value=perf_metrics["gini"],
                         alert_label=label,
-                        details={"performance_week": performance_week.isoformat(), "bmalo": bmalo},
+                        details={"score_week": score_week.isoformat(), "target": tname},
                         calculated_from="FACT_PERFORMANCE_OUTCOMES",
                     ))
 
             if perf_metrics.get("ks") is not None:
-                mname = f"ks_{bmalo}"
+                mname = f"ks_{tname}"
                 _, label = self.evaluator.evaluate(mname, perf_metrics["ks"], model_registry_id)
                 metric_id = self.evaluator.get_metric_id(mname)
                 if metric_id is not None:
@@ -270,15 +271,17 @@ class MetricsCalculator:
                         metric_id=metric_id,
                         metric_value=perf_metrics["ks"],
                         alert_label=label,
-                        details={"performance_week": performance_week.isoformat(), "bmalo": bmalo},
+                        details={"score_week": score_week.isoformat(), "target": tname},
                         calculated_from="FACT_PERFORMANCE_OUTCOMES",
                     ))
 
             violations = get_ordering_violations_for_metric(
-                self.session, model_registry_id, performance_week, metric_type=bmalo
+                self.session, model_registry_id, score_week,
+                metric_type=tname,
+                ascending=ascending,
             )
             n_v = violations.get("violations", 0)
-            mname = f"ordering_violations_{bmalo}"
+            mname = f"ordering_violations_{tname}"
             _, label = self.evaluator.evaluate(mname, n_v, model_registry_id)
             metric_id = self.evaluator.get_metric_id(mname)
             if metric_id is not None:
@@ -290,8 +293,8 @@ class MetricsCalculator:
                     metric_value=float(n_v),
                     alert_label=label,
                     details={
-                        "performance_week": performance_week.isoformat(),
-                        "bmalo": bmalo,
+                        "score_week": score_week.isoformat(),
+                        "target": tname,
                         "violation_pairs": violations.get("violation_pairs", []),
                     },
                     calculated_from="FACT_PERFORMANCE_OUTCOMES",
@@ -327,7 +330,6 @@ class MetricsCalculator:
         result = {}
         for r in rows:
             mname = metric_name_map.get(r.metric_id, f"metric_{r.metric_id}")
-            # Incluir variable en la key si aplica para distinguir PSI por variable
             key = mname
             if r.variable_id is not None and r.details:
                 sub = r.details.get("variable") or r.details.get("metric_subtype")

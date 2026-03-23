@@ -6,6 +6,8 @@ Orquesta:
 2. Construye SegmentMetrics para cada sub-scorecard
 3. Llama al LLM para narrativas
 4. Retorna el contexto completo para el renderer
+
+Los targets y sus lags se leen dinámicamente desde META_VARIABLES.
 """
 
 from datetime import date, timedelta
@@ -15,14 +17,12 @@ from sqlalchemy.orm import Session
 from mlmonitor.analyst.base import AnalysisContext, AnalysisResult, SegmentMetrics
 from mlmonitor.db.models import (
     FactMetricsHistory,
-    FactPerformanceOutcomes,
     MetaMetricThresholds,
     MetaModelRegistry,
     MetaVariables,
 )
-from mlmonitor.metrics.business_metrics import B_MALO_ACTIVE, get_business_metrics_table
+from mlmonitor.metrics.business_metrics import get_business_metrics_table
 
-LAG_WEEKS = 8
 STATUS_ORDER = {"CRITICAL": 0, "WARNING": 1, "OK": 2}
 _LABEL_TO_FLAG = {"OK": 0, "WARNING": 1, "CRITICAL": 2}
 
@@ -50,8 +50,6 @@ class ReportBuilder:
         Returns:
             (AnalysisContext, AnalysisResult | None)
         """
-        performance_week = calculation_week - timedelta(weeks=LAG_WEEKS)
-
         # Obtener metadata del modelo (un registro por submodel_id)
         model_regs = (
             self.session.query(MetaModelRegistry)
@@ -62,7 +60,23 @@ class ReportBuilder:
             .all()
         )
         model_name = model_regs[0].model_name if model_regs else model_id
-        lag_semanas = model_regs[0].lag_semanas if model_regs else LAG_WEEKS
+
+        # Determinar performance_week de display usando el primer target del primer segmento.
+        # Fallback: MetaModelRegistry.lag_semanas o 8 semanas.
+        primary_lag = (model_regs[0].lag_semanas or 8) if model_regs else 8
+        if model_regs:
+            first_target = (
+                self.session.query(MetaVariables)
+                .filter(
+                    MetaVariables.model_registry_id == model_regs[0].id,
+                    MetaVariables.variable_rol == "target",
+                    MetaVariables.valid_to.is_(None),
+                )
+                .first()
+            )
+            if first_target and first_target.lag_semanas:
+                primary_lag = first_target.lag_semanas
+        performance_week = calculation_week - timedelta(weeks=primary_lag)
 
         # Cargar mapa de métricas: {metric_id → metric_name}
         threshold_rows = (
@@ -75,7 +89,7 @@ class ReportBuilder:
         # Construir SegmentMetrics por segmento
         segments = []
         for reg in model_regs:
-            # Cargar variables del segmento: {var_id: var_name}
+            # Cargar todas las variables del segmento
             var_rows = (
                 self.session.query(MetaVariables)
                 .filter(
@@ -84,13 +98,15 @@ class ReportBuilder:
                 )
                 .all()
             )
-            variable_map = {v.id: v.variable_name for v in var_rows}
+            variable_map = {v.id: v.variable_name for v in var_rows if v.variable_rol != "target"}
+            target_vars = [v for v in var_rows if v.variable_rol == "target"]
 
             seg_metrics = self._build_segment_metrics(
                 model_registry_id=reg.id,
                 segment_id=reg.submodel_id,
                 segment_description=reg.model_description or reg.submodel_id,
                 variable_map=variable_map,
+                target_vars=target_vars,
                 metric_name_map=metric_name_map,
                 calculation_week=calculation_week,
                 performance_week=performance_week,
@@ -113,10 +129,10 @@ class ReportBuilder:
             model_name=model_name,
             calculation_week=calculation_week,
             performance_week=performance_week,
-            lag_semanas=lag_semanas,
+            lag_semanas=primary_lag,
             segments=segments,
             fleet_summary=fleet_summary,
-            total_submodels=11,
+            total_submodels=len(model_regs),
         )
 
         # Llamada al LLM si hay analista
@@ -132,6 +148,7 @@ class ReportBuilder:
         segment_id: str,
         segment_description: str,
         variable_map: dict[int, str],
+        target_vars: list,
         metric_name_map: dict[int, str],
         calculation_week: date,
         performance_week: date,
@@ -147,7 +164,6 @@ class ReportBuilder:
         )
 
         # Construir dict de métricas con nombres resueltos
-        # Para PSI y null_rate por variable, se usan claves compuestas
         metrics_dict: dict[str, FactMetricsHistory] = {}
         for row in metrics_rows:
             mname = metric_name_map.get(row.metric_id, f"metric_{row.metric_id}")
@@ -177,19 +193,20 @@ class ReportBuilder:
             psi_max = psi_max_row.metric_value
             psi_max_variable = (psi_max_row.details or {}).get("max_variable", "")
 
-        # Gini / KS / ordering violations — un valor por variable b_malo activa
+        # Gini / KS / ordering violations — un valor por variable target
         gini: dict[str, float | None] = {}
         ks: dict[str, float | None] = {}
         ordering_violations: dict[str, int] = {}
-        for bmalo in B_MALO_ACTIVE:
-            gini_row = metrics_dict.get(f"gini_{bmalo}")
-            gini[bmalo] = gini_row.metric_value if gini_row else None
+        for target in target_vars:
+            tname = target.variable_name
+            gini_row = metrics_dict.get(f"gini_{tname}")
+            gini[tname] = gini_row.metric_value if gini_row else None
 
-            ks_row = metrics_dict.get(f"ks_{bmalo}")
-            ks[bmalo] = ks_row.metric_value if ks_row else None
+            ks_row = metrics_dict.get(f"ks_{tname}")
+            ks[tname] = ks_row.metric_value if ks_row else None
 
-            ov_row = metrics_dict.get(f"ordering_violations_{bmalo}")
-            ordering_violations[bmalo] = int(ov_row.metric_value or 0) if ov_row else 0
+            ov_row = metrics_dict.get(f"ordering_violations_{tname}")
+            ordering_violations[tname] = int(ov_row.metric_value or 0) if ov_row else 0
 
         # Null rate alerts
         null_rate_alerts = []
@@ -224,7 +241,7 @@ class ReportBuilder:
         else:
             overall_status = "OK"
 
-        # Business table (con lag)
+        # Business table — score_week es la semana de performance del target primario
         business_df = get_business_metrics_table(
             self.session, model_registry_id, performance_week
         )

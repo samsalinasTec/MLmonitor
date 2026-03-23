@@ -10,6 +10,7 @@ import json
 from datetime import date, datetime, timezone
 
 from sqlalchemy import (
+    Boolean,
     Column,
     Date,
     DateTime,
@@ -96,6 +97,8 @@ class MetaVariables(Base):
     variable_name = Column(String(100), nullable=False)
     variable_type = Column(String(20), nullable=False)  # numeric | categorical
     variable_rol = Column(String(20), nullable=True, default="input")  # input | output | target
+    lag_semanas = Column(Integer, nullable=True)        # ventana de observación; solo variable_rol="target"
+    ascending_order = Column(Boolean, nullable=True)    # True=crece con score (payment), False=decrece (b_malo); solo targets
     description = Column(String(300))
     woe_categories = Column(JSONText)  # para categóricas: lista de valores
     binning_rules = Column(JSONText)  # ej: {"type": "fixed_cuts", "cuts": [0, 201, ...]}

@@ -1,15 +1,25 @@
-"""Tests para el módulo de métricas de performance (Gini, KS)."""
+"""
+Tests para el módulo de métricas de performance (Gini, KS).
+
+El nuevo diseño requiere pasar metric_type y lag_semanas explícitamente.
+date_outcome_key = score_week + lag_semanas (el bug anterior usaba score_week para ambos).
+"""
 
 import pandas as pd
 import pytest
+from datetime import date
 
 from mlmonitor.metrics.performance import compute_gini_ks, get_gini_ks_for_segment
+from conftest import TARGET_NAME, TARGET_LAG, WEEK_0
 
+
+# ---------------------------------------------------------------------------
+# Unit tests — sin DB
+# ---------------------------------------------------------------------------
 
 class TestComputeGiniKS:
     def test_perfect_model_gini(self):
         """Modelo perfecto: todos los eventos en bins de score alto (invertido)."""
-        # Con score invertido, los primeros registros son los de mayor riesgo
         df = pd.DataFrame({
             "count_event": [100, 50, 10, 0, 0, 0, 0, 0, 0, 0],
             "count_non_event": [0, 0, 0, 0, 0, 50, 100, 100, 100, 100],
@@ -30,8 +40,7 @@ class TestComputeGiniKS:
 
     def test_empty_df_returns_defaults(self):
         """DataFrame vacío retorna valores por defecto."""
-        df = pd.DataFrame()
-        result = compute_gini_ks(df)
+        result = compute_gini_ks(pd.DataFrame())
         assert result["gini"] == 0.0
         assert result["ks"] == 0.0
         assert result["auc"] == 0.5
@@ -64,50 +73,82 @@ class TestComputeGiniKS:
             "count_total": [90, 70, 60, 55, 60, 65, 73, 82, 91, 100],
         })
         result = compute_gini_ks(df)
-        expected_gini = round(2 * result["auc"] - 1, 4)
-        assert abs(result["gini"] - expected_gini) < 1e-4
+        assert abs(result["gini"] - round(2 * result["auc"] - 1, 4)) < 1e-4
 
+
+# ---------------------------------------------------------------------------
+# Integration tests — con DB
+# ---------------------------------------------------------------------------
 
 class TestGiniKSFromDB:
-    def test_returns_dict_with_keys(self, session, segment_ids, performance_week):
+    def test_returns_dict_with_keys(self, session, segment_ids, score_week):
         """get_gini_ks_for_segment retorna dict con claves gini/ks/auc."""
-        reg_id = segment_ids["s2"]
-        result = get_gini_ks_for_segment(session, reg_id, performance_week)
+        reg_id = segment_ids["s1"]
+        result = get_gini_ks_for_segment(
+            session, reg_id, score_week,
+            metric_type=TARGET_NAME, lag_semanas=TARGET_LAG,
+        )
         assert "gini" in result
         assert "ks" in result
         assert "auc" in result
 
-    def test_gini_in_valid_range(self, session, segment_ids, performance_week):
+    def test_gini_in_valid_range(self, session, segment_ids, score_week):
         """Gini debe estar entre -1 y 1."""
-        for seg in ["s1", "s2", "s3", "s4", "s5"]:
+        for seg in ["s1", "s2"]:
             reg_id = segment_ids[seg]
-            result = get_gini_ks_for_segment(session, reg_id, performance_week)
+            result = get_gini_ks_for_segment(
+                session, reg_id, score_week,
+                metric_type=TARGET_NAME, lag_semanas=TARGET_LAG,
+            )
             if result["gini"] is not None:
                 assert -1.0 <= result["gini"] <= 1.0, (
                     f"{seg} Gini fuera de rango: {result['gini']}"
                 )
 
-    def test_s1_gini_drops_over_weeks(self, session, segment_ids):
-        """s1 debe tener Gini más bajo en semana 8 que en semana 1 (anomalía inyectada)."""
-        from mlmonitor.data.dummy_generator import _week_date
-        week1 = _week_date(1)
-        week8 = _week_date(8)
+    def test_s1_has_positive_gini(self, session, segment_ids, score_week):
+        """s1 tiene buena discriminación — Gini debe ser > 0."""
+        reg_id = segment_ids["s1"]
+        result = get_gini_ks_for_segment(
+            session, reg_id, score_week,
+            metric_type=TARGET_NAME, lag_semanas=TARGET_LAG,
+        )
+        assert result["gini"] is not None
+        assert result["gini"] > 0.0, (
+            f"s1 Gini esperado > 0, obtenido: {result['gini']}"
+        )
+
+    def test_lag_fix_correct_outcome_date(self, session, segment_ids):
+        """
+        Verifica el fix del bug date_outcome_key:
+        - Con lag correcto (TARGET_LAG) → encuentra datos → Gini no es None
+        - Con lag=0 → outcome_key = score_key (sin datos ahí) → Gini es None
+        """
         reg_id = segment_ids["s1"]
 
-        r1 = get_gini_ks_for_segment(session, reg_id, week1)
-        r8 = get_gini_ks_for_segment(session, reg_id, week8)
+        # Con lag correcto: finds data at score_week + TARGET_LAG
+        result_correct = get_gini_ks_for_segment(
+            session, reg_id, WEEK_0,
+            metric_type=TARGET_NAME, lag_semanas=TARGET_LAG,
+        )
+        assert result_correct["gini"] is not None, (
+            "Con lag correcto debe encontrar datos de performance"
+        )
 
-        if r1["gini"] is not None and r8["gini"] is not None:
-            assert r8["gini"] < r1["gini"], (
-                f"s1 Gini semana8 ({r8['gini']:.4f}) debería ser menor "
-                f"que semana1 ({r1['gini']:.4f})"
-            )
+        # Con lag=0: busca outcome en score_week (no hay datos ahí) → None
+        result_wrong_lag = get_gini_ks_for_segment(
+            session, reg_id, WEEK_0,
+            metric_type=TARGET_NAME, lag_semanas=0,
+        )
+        assert result_wrong_lag["gini"] is None, (
+            "Con lag=0 no debe encontrar datos (outcome date != score date)"
+        )
 
-    def test_missing_week_returns_none(self, session, segment_ids):
+    def test_future_week_returns_none(self, session, segment_ids):
         """Semana sin datos retorna None para todas las métricas."""
-        from datetime import date
-        future_week = date(2030, 1, 1)
         reg_id = segment_ids["s1"]
-        result = get_gini_ks_for_segment(session, reg_id, future_week)
+        result = get_gini_ks_for_segment(
+            session, reg_id, date(2099, 1, 1),
+            metric_type=TARGET_NAME, lag_semanas=TARGET_LAG,
+        )
         assert result["gini"] is None
         assert result["ks"] is None

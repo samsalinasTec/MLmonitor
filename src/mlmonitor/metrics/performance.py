@@ -100,23 +100,24 @@ def compute_gini_ks(df: pd.DataFrame) -> dict[str, float]:
 def get_gini_ks_for_segment(
     session: Session,
     model_registry_id: int,
-    performance_week: date,
-    metric_type: str = "first_payment_default2",
-    lag_weeks: int = 8,
+    score_week: date,
+    metric_type: str,
+    lag_semanas: int,
 ) -> dict[str, float]:
     """
-    Calcula Gini y KS para un segmento en la semana de performance.
+    Calcula Gini y KS para un submodelo dado el score_week y el lag del target.
 
     Args:
-        model_registry_id: ID surrogado del registro del modelo (segmento)
-        performance_week: date_score_key (semana en que se generó el score)
-        metric_type: columna de outcome a usar (pre-labeled, no lag adicional)
-        lag_weeks: no usado (mantenido para compatibilidad de firma)
+        model_registry_id: ID surrogado del registro del modelo (submodelo)
+        score_week: date_score_key (semana en que se generó el score)
+        metric_type: nombre del target (ej: 'b_malo8_13', 'first_payment_default2')
+        lag_semanas: ventana de observación del target; date_outcome_key = score_week + lag
     """
+    date_outcome_key = score_week + timedelta(weeks=lag_semanas)
     df = _build_performance_df(
         session, model_registry_id,
-        date_score_key=performance_week,
-        date_outcome_key=performance_week,
+        date_score_key=score_week,
+        date_outcome_key=date_outcome_key,
         metric_type=metric_type,
     )
     if df.empty:

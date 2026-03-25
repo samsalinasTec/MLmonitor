@@ -2,7 +2,7 @@
 Tests para el módulo de métricas de performance (Gini, KS).
 
 El nuevo diseño requiere pasar metric_type y lag_semanas explícitamente.
-date_outcome_key = score_week + lag_semanas (el bug anterior usaba score_week para ambos).
+execution_week = origination_week + lag_semanas (el bug anterior usaba origination_week para ambos).
 """
 
 import pandas as pd
@@ -117,15 +117,15 @@ class TestGiniKSFromDB:
             f"s1 Gini esperado > 0, obtenido: {result['gini']}"
         )
 
-    def test_lag_fix_correct_outcome_date(self, session, segment_ids):
+    def test_lag_fix_correct_execution_week(self, session, segment_ids):
         """
-        Verifica el fix del bug date_outcome_key:
+        Verifica el fix del bug execution_week:
         - Con lag correcto (TARGET_LAG) → encuentra datos → Gini no es None
-        - Con lag=0 → outcome_key = score_key (sin datos ahí) → Gini es None
+        - Con lag=0 → execution_week = origination_week (sin datos ahí) → Gini es None
         """
         reg_id = segment_ids["s1"]
 
-        # Con lag correcto: finds data at score_week + TARGET_LAG
+        # Con lag correcto: finds data at origination_week + TARGET_LAG
         result_correct = get_gini_ks_for_segment(
             session, reg_id, WEEK_0,
             metric_type=TARGET_NAME, lag_semanas=TARGET_LAG,
@@ -134,13 +134,13 @@ class TestGiniKSFromDB:
             "Con lag correcto debe encontrar datos de performance"
         )
 
-        # Con lag=0: busca outcome en score_week (no hay datos ahí) → None
+        # Con lag=0: busca execution_week en origination_week (no hay datos ahí) → None
         result_wrong_lag = get_gini_ks_for_segment(
             session, reg_id, WEEK_0,
             metric_type=TARGET_NAME, lag_semanas=0,
         )
         assert result_wrong_lag["gini"] is None, (
-            "Con lag=0 no debe encontrar datos (outcome date != score date)"
+            "Con lag=0 no debe encontrar datos (execution_week == origination_week)"
         )
 
     def test_future_week_returns_none(self, session, segment_ids):

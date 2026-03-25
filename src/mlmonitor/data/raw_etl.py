@@ -28,7 +28,8 @@ from mlmonitor.data.variable_mapping import (
 )
 from mlmonitor.db.models import (
     FactDistributions,
-    FactPerformanceOutcomes,
+    FactPerformanceBinned,
+    FactPerformanceIndividual,
     MetaMetricThresholds,
     MetaModelRegistry,
     MetaVariables,
@@ -70,6 +71,13 @@ def _semana_to_date(semana_num: int) -> date:
     return iso_monday - timedelta(days=6)              # martes = start W-MON
 
 
+def _iso_week_add(semana_num: int, lag_weeks: int) -> int:
+    """Retorna el número de semana ISO lag_weeks después de semana_num."""
+    d = _semana_to_date(semana_num) + timedelta(weeks=lag_weeks)
+    y, w, _ = d.isocalendar()
+    return y * 100 + w
+
+
 class RawDataETL:
     def __init__(
         self,
@@ -98,7 +106,8 @@ class RawDataETL:
         counts["META_VARIABLES"] = self._populate_meta_variables()
         counts["META_METRIC_THRESHOLDS"] = self._populate_meta_metric_thresholds()
         counts["FACT_DISTRIBUTIONS"] = self._populate_fact_distributions()
-        counts["FACT_PERFORMANCE_OUTCOMES"] = self._populate_fact_performance_outcomes()
+        counts["FACT_PERFORMANCE_BINNED"] = self._populate_fact_performance_binned()
+        counts["FACT_PERFORMANCE_INDIVIDUAL"] = self._populate_fact_performance_individual()
         return counts
 
     # ------------------------------------------------------------------
@@ -496,27 +505,35 @@ class RawDataETL:
         return len(all_rows)
 
     # ------------------------------------------------------------------
-    # FACT_PERFORMANCE_OUTCOMES
+    # FACT_PERFORMANCE_BINNED
     # ------------------------------------------------------------------
 
-    def _populate_fact_performance_outcomes(self) -> int:
+    def _populate_fact_performance_binned(self) -> int:
         if self._weekly_df is None or self._weekly_df.empty:
-            logger.warning("No weekly data loaded, skipping performance outcomes")
+            logger.warning("No weekly data loaded, skipping performance binned")
             return 0
 
         df = self._weekly_df.copy()
-
         df = df[df["flg_baz_boost"] == 1].copy()
         if df.empty:
             logger.warning("No BazBoost records (flg_baz_boost=1) found")
             return 0
-
         df = df[df["flg_surtida"] == 1].copy()
         if df.empty:
             logger.warning("No disbursed records (flg_surtida=1)")
             return 0
 
-        logger.info("Performance outcomes: %d records (flg_baz_boost=1, flg_surtida=1)", len(df))
+        # vintage = origination week (ISO int, e.g. 202415); semana_num = execution week
+        df = df.dropna(subset=["vintage"]).copy()
+        df["_vintage_iso"] = df["vintage"].apply(int)
+        vintage_dates = df["_vintage_iso"].apply(_semana_to_date)
+        semana_dates = df["semana_num"].apply(lambda s: _semana_to_date(int(s)))
+        df["_semanas_vida"] = (
+            (pd.to_datetime(semana_dates) - pd.to_datetime(vintage_dates))
+            .dt.days.floordiv(7)
+        )
+
+        logger.info("Performance binned: %d records (flg_baz_boost=1, flg_surtida=1)", len(df))
 
         df["_score_bin"] = pd.cut(
             df["fnpuntaje"],
@@ -524,37 +541,39 @@ class RawDataETL:
             labels=SCORE_BIN_LABELS,
             right=False,
         )
-        df["_midpoint"] = df["_score_bin"].map(
-            dict(zip(SCORE_BIN_LABELS, SCORE_MIDPOINTS))
-        )
+        df["_midpoint"] = df["_score_bin"].map(dict(zip(SCORE_BIN_LABELS, SCORE_MIDPOINTS)))
 
-        all_rows: list[FactPerformanceOutcomes] = []
+        all_rows: list[FactPerformanceBinned] = []
 
-        for (seg_id, semana_num), grp in df.groupby(["fiidsegmento", "semana_num"]):
-            submodel_id = f"s{seg_id}"
-            reg_id = self._registry_map.get(submodel_id)
-            if reg_id is None:
+        for tname, tparams in TARGET_VARIABLES.items():
+            if tname not in df.columns:
+                continue
+            lag = tparams["lag_semanas"]
+
+            # Only include credits that have reached exactly lag weeks of age
+            mature_df = df[df["_semanas_vida"] == lag].copy()
+            if mature_df.empty:
                 continue
 
-            date_score_key = _semana_to_date(int(semana_num))
+            for (seg_id, vintage_iso), grp in mature_df.groupby(["fiidsegmento", "_vintage_iso"]):
+                submodel_id = f"s{seg_id}"
+                reg_id = self._registry_map.get(submodel_id)
+                if reg_id is None:
+                    continue
 
-            for score_bin, bin_grp in grp.groupby("_score_bin", observed=True):
-                count_total = len(bin_grp)
-                midpoint = bin_grp["_midpoint"].iloc[0] if len(bin_grp) > 0 else None
+                origination_week = _semana_to_date(vintage_iso)
+                execution_week = origination_week + timedelta(weeks=lag)
 
-                for tname, tparams in TARGET_VARIABLES.items():
-                    if tname not in bin_grp.columns:
-                        continue
+                for score_bin, bin_grp in grp.groupby("_score_bin", observed=True):
+                    count_total = len(bin_grp)
+                    midpoint = bin_grp["_midpoint"].iloc[0] if count_total > 0 else None
                     valid = bin_grp[tname].dropna()
                     count_event_real = int(valid.sum()) if not valid.empty else 0
 
-                    # date_outcome_key = score_date + lag (cada target tiene su propio lag)
-                    date_outcome_key = date_score_key + timedelta(weeks=tparams["lag_semanas"])
-
-                    all_rows.append(FactPerformanceOutcomes(
+                    all_rows.append(FactPerformanceBinned(
                         model_registry_id=reg_id,
-                        date_score_key=date_score_key,
-                        date_outcome_key=date_outcome_key,
+                        origination_week=origination_week,
+                        execution_week=execution_week,
                         metric_type=tname,
                         score_bin=str(score_bin),
                         score_midpoint=int(midpoint) if midpoint is not None else None,
@@ -567,5 +586,82 @@ class RawDataETL:
             self.session.add_all(all_rows)
             self.session.flush()
 
-        logger.info("FACT_PERFORMANCE_OUTCOMES: %d rows", len(all_rows))
+        logger.info("FACT_PERFORMANCE_BINNED: %d rows", len(all_rows))
+        return len(all_rows)
+
+    # ------------------------------------------------------------------
+    # FACT_PERFORMANCE_INDIVIDUAL
+    # ------------------------------------------------------------------
+
+    def _populate_fact_performance_individual(self) -> int:
+        if self._weekly_df is None or self._weekly_df.empty:
+            return 0
+
+        df = self._weekly_df.copy()
+        df = df[(df["flg_baz_boost"] == 1) & (df["flg_surtida"] == 1)].copy()
+        if df.empty:
+            return 0
+
+        # vintage = origination week (ISO int, e.g. 202415); semana_num = execution week
+        df = df.dropna(subset=["vintage"]).copy()
+        df["_vintage_iso"] = df["vintage"].apply(int)
+        vintage_dates = df["_vintage_iso"].apply(_semana_to_date)
+        semana_dates = df["semana_num"].apply(lambda s: _semana_to_date(int(s)))
+        df["_semanas_vida"] = (
+            (pd.to_datetime(semana_dates) - pd.to_datetime(vintage_dates))
+            .dt.days.floordiv(7)
+        )
+
+        all_rows: list[FactPerformanceIndividual] = []
+        seen: set[tuple] = set()  # (credito_id, reg_id, ventana)
+
+        for tname, tparams in TARGET_VARIABLES.items():
+            if tname not in df.columns:
+                continue
+            lag = tparams["lag_semanas"]
+
+            # Maturity filter: credit is at exactly lag weeks of age, target not null
+            mature_df = df[(df["_semanas_vida"] == lag) & df[tname].notna()].copy()
+            if mature_df.empty:
+                continue
+
+            for seg_id, grp in mature_df.groupby("fiidsegmento"):
+                submodel_id = f"s{seg_id}"
+                reg_id = self._registry_map.get(submodel_id)
+                if reg_id is None:
+                    continue
+
+                for _, row in grp.iterrows():
+                    credito_id = str(row["fiidscoreds"])
+                    key = (credito_id, reg_id, tname)
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    all_rows.append(FactPerformanceIndividual(
+                        credito_id=credito_id,
+                        model_registry_id=reg_id,
+                        origination_week=int(row["_vintage_iso"]),
+                        execution_week=int(row["semana_num"]),
+                        fnpuntaje=float(row["fnpuntaje"]),
+                        semanas_vida=lag,
+                        ventana=tname,
+                        flag=int(row[tname]),
+                    ))
+
+        # Idempotente: ON CONFLICT DO NOTHING via unique constraint
+        for row in all_rows:
+            existing = (
+                self.session.query(FactPerformanceIndividual)
+                .filter(
+                    FactPerformanceIndividual.credito_id == row.credito_id,
+                    FactPerformanceIndividual.model_registry_id == row.model_registry_id,
+                    FactPerformanceIndividual.ventana == row.ventana,
+                )
+                .first()
+            )
+            if existing is None:
+                self.session.add(row)
+
+        self.session.flush()
+        logger.info("FACT_PERFORMANCE_INDIVIDUAL: %d rows", len(all_rows))
         return len(all_rows)

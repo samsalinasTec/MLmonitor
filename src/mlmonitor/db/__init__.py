@@ -2,7 +2,8 @@ from .models import (
     Base,
     FactDistributions,
     FactMetricsHistory,
-    FactPerformanceOutcomes,
+    FactPerformanceBinned,
+    FactPerformanceIndividual,
     MetaMetricThresholds,
     MetaModelRegistry,
     MetaVariables,
@@ -14,6 +15,7 @@ __all__ = [
     "MetaVariables",
     "MetaMetricThresholds",
     "FactDistributions",
-    "FactPerformanceOutcomes",
+    "FactPerformanceBinned",
+    "FactPerformanceIndividual",
     "FactMetricsHistory",
 ]

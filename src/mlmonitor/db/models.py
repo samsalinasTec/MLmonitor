@@ -158,28 +158,51 @@ class FactDistributions(Base):
     loaded_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
 
-class FactPerformanceOutcomes(Base):
+class FactPerformanceBinned(Base):
     """Outcomes de performance por score bin. Solo append. Conteos atómicos; tasas se calculan al vuelo."""
 
-    __tablename__ = "FACT_PERFORMANCE_OUTCOMES"
+    __tablename__ = "FACT_PERFORMANCE_BINNED"
     __table_args__ = (
         UniqueConstraint(
-            "model_registry_id", "date_score_key", "date_outcome_key",
+            "model_registry_id", "origination_week", "execution_week",
             "metric_type", "score_bin",
-            name="uq_fact_performance_outcomes"
+            name="uq_fact_performance_binned"
         ),
     )
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     model_registry_id = Column(Integer, ForeignKey("META_MODEL_REGISTRY.id"), nullable=False, index=True)
-    date_score_key = Column(Date, nullable=False, index=True)  # semana en que se generó el score
-    date_outcome_key = Column(Date, nullable=False, index=True)  # semana en que se observó el outcome (T+lag)
+    origination_week = Column(Date, nullable=False, index=True)  # semana de origen del score
+    execution_week = Column(Date, nullable=False, index=True)  # semana ISO en que corrió el ETL
     metric_type = Column(String(50), nullable=False)  # b_malo2_4, b_malo4_6, b_malo8_13, b_malo8_16, first_payment_default2, etc.
     score_bin = Column(String(20), nullable=False)  # "0-100", "100-200", ...
     score_midpoint = Column(Integer)
     count_total = Column(Integer, default=0)
     count_event_real = Column(Integer, default=0)  # mora / atraso real
     sum_predicted_score = Column(Float)  # para calibración: score promedio = sum/count_total
+    loaded_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+
+class FactPerformanceIndividual(Base):
+    """Outcomes a nivel de crédito individual. Solo append. Madurez: semanas_vida == lag."""
+
+    __tablename__ = "FACT_PERFORMANCE_INDIVIDUAL"
+    __table_args__ = (
+        UniqueConstraint(
+            "credito_id", "model_registry_id", "ventana",
+            name="uq_fact_perf_individual",
+        ),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    credito_id = Column(String(50), nullable=False, index=True)
+    model_registry_id = Column(Integer, ForeignKey("META_MODEL_REGISTRY.id"), nullable=False, index=True)
+    origination_week = Column(Integer, nullable=False, index=True)  # ISO: 202541
+    execution_week = Column(Integer, nullable=False)                 # ISO: 202549
+    fnpuntaje = Column(Float)                                        # score continuo real
+    semanas_vida = Column(Integer, nullable=False)                   # execution_week - origination_week en semanas
+    ventana = Column(String(50), nullable=False)                     # nombre de la variable target
+    flag = Column(Integer, nullable=False)                           # 0 o 1, nunca null
     loaded_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
 

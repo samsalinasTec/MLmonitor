@@ -234,11 +234,11 @@ class MetricsCalculator:
         for target in target_vars:
             tname = target.variable_name
             lag = target.lag_semanas or 8
-            score_week = current_week - timedelta(weeks=lag)
+            origination_week = current_week - timedelta(weeks=lag)
             ascending = target.ascending_order if target.ascending_order is not None else False
 
             perf_metrics = get_gini_ks_for_segment(
-                self.session, model_registry_id, score_week,
+                self.session, model_registry_id, origination_week,
                 metric_type=tname,
                 lag_semanas=lag,
             )
@@ -255,8 +255,8 @@ class MetricsCalculator:
                         metric_id=metric_id,
                         metric_value=perf_metrics["gini"],
                         alert_label=label,
-                        details={"score_week": score_week.isoformat(), "target": tname},
-                        calculated_from="FACT_PERFORMANCE_OUTCOMES",
+                        details={"origination_week": origination_week.isoformat(), "target": tname},
+                        calculated_from="FACT_PERFORMANCE_BINNED",
                     ))
 
             if perf_metrics.get("ks") is not None:
@@ -271,12 +271,12 @@ class MetricsCalculator:
                         metric_id=metric_id,
                         metric_value=perf_metrics["ks"],
                         alert_label=label,
-                        details={"score_week": score_week.isoformat(), "target": tname},
-                        calculated_from="FACT_PERFORMANCE_OUTCOMES",
+                        details={"origination_week": origination_week.isoformat(), "target": tname},
+                        calculated_from="FACT_PERFORMANCE_BINNED",
                     ))
 
             violations = get_ordering_violations_for_metric(
-                self.session, model_registry_id, score_week,
+                self.session, model_registry_id, origination_week,
                 metric_type=tname,
                 ascending=ascending,
             )
@@ -293,11 +293,11 @@ class MetricsCalculator:
                     metric_value=float(n_v),
                     alert_label=label,
                     details={
-                        "score_week": score_week.isoformat(),
+                        "origination_week": origination_week.isoformat(),
                         "target": tname,
                         "violation_pairs": violations.get("violation_pairs", []),
                     },
-                    calculated_from="FACT_PERFORMANCE_OUTCOMES",
+                    calculated_from="FACT_PERFORMANCE_BINNED",
                 ))
 
         return rows

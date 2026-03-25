@@ -19,13 +19,13 @@ from datetime import date
 import pandas as pd
 from sqlalchemy.orm import Session
 
-from mlmonitor.db.models import FactPerformanceOutcomes, MetaVariables
+from mlmonitor.db.models import FactPerformanceBinned, MetaVariables
 
 
 def get_business_metrics_table(
     session: Session,
     model_registry_id: int,
-    score_week: date,
+    origination_week: date,
 ) -> pd.DataFrame:
     """
     Retorna tabla de métricas de negocio por decil ordenada por score ascendente.
@@ -33,7 +33,7 @@ def get_business_metrics_table(
 
     Args:
         model_registry_id: ID surrogado del registro del modelo (segmento)
-        score_week: semana en que se generó el score (date_score_key)
+        origination_week: semana de origen del score
 
     Returns:
         DataFrame con columnas: score_bin, score_midpoint, count_total,
@@ -55,13 +55,13 @@ def get_business_metrics_table(
     target_names = [t.variable_name for t in targets]
 
     rows = (
-        session.query(FactPerformanceOutcomes)
+        session.query(FactPerformanceBinned)
         .filter(
-            FactPerformanceOutcomes.model_registry_id == model_registry_id,
-            FactPerformanceOutcomes.date_score_key == score_week,
-            FactPerformanceOutcomes.metric_type.in_(target_names),
+            FactPerformanceBinned.model_registry_id == model_registry_id,
+            FactPerformanceBinned.origination_week == origination_week,
+            FactPerformanceBinned.metric_type.in_(target_names),
         )
-        .order_by(FactPerformanceOutcomes.score_midpoint)
+        .order_by(FactPerformanceBinned.score_midpoint)
         .all()
     )
 
@@ -149,7 +149,7 @@ def check_ordering_violations(
 def get_ordering_violations_for_metric(
     session: Session,
     model_registry_id: int,
-    score_week: date,
+    origination_week: date,
     metric_type: str,
     ascending: bool = False,
 ) -> dict:
@@ -157,14 +157,14 @@ def get_ordering_violations_for_metric(
     Verifica si una variable target viola la monotonía esperada a lo largo de los bins.
 
     Args:
-        score_week: date_score_key (semana en que se generó el score)
+        origination_week: semana de origen del score
         metric_type: nombre del target (ej: 'b_malo8_13', 'first_payment_default2')
         ascending: True si debe crecer con score, False si debe decrecer (default)
 
     Returns:
         dict con violations y violation_pairs
     """
-    df = get_business_metrics_table(session, model_registry_id, score_week)
+    df = get_business_metrics_table(session, model_registry_id, origination_week)
     col = f"{metric_type}_rate"
     if df.empty or col not in df.columns:
         return {"violations": 0, "violation_pairs": []}

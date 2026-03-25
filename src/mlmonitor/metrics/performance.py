@@ -15,26 +15,26 @@ import numpy as np
 import pandas as pd
 from sqlalchemy.orm import Session
 
-from mlmonitor.db.models import FactPerformanceOutcomes
+from mlmonitor.db.models import FactPerformanceBinned
 
 
 def _build_performance_df(
     session: Session,
     model_registry_id: int,
-    date_score_key: date,
-    date_outcome_key: date,
+    origination_week: date,
+    execution_week: date,
     metric_type: str = "first_payment_default2",
 ) -> pd.DataFrame:
     """Carga los outcomes de una semana y construye el DataFrame base."""
     rows = (
-        session.query(FactPerformanceOutcomes)
+        session.query(FactPerformanceBinned)
         .filter(
-            FactPerformanceOutcomes.model_registry_id == model_registry_id,
-            FactPerformanceOutcomes.date_score_key == date_score_key,
-            FactPerformanceOutcomes.date_outcome_key == date_outcome_key,
-            FactPerformanceOutcomes.metric_type == metric_type,
+            FactPerformanceBinned.model_registry_id == model_registry_id,
+            FactPerformanceBinned.origination_week == origination_week,
+            FactPerformanceBinned.execution_week == execution_week,
+            FactPerformanceBinned.metric_type == metric_type,
         )
-        .order_by(FactPerformanceOutcomes.score_midpoint)
+        .order_by(FactPerformanceBinned.score_midpoint)
         .all()
     )
 
@@ -100,24 +100,24 @@ def compute_gini_ks(df: pd.DataFrame) -> dict[str, float]:
 def get_gini_ks_for_segment(
     session: Session,
     model_registry_id: int,
-    score_week: date,
+    origination_week: date,
     metric_type: str,
     lag_semanas: int,
 ) -> dict[str, float]:
     """
-    Calcula Gini y KS para un submodelo dado el score_week y el lag del target.
+    Calcula Gini y KS para un submodelo dado el origination_week y el lag del target.
 
     Args:
         model_registry_id: ID surrogado del registro del modelo (submodelo)
-        score_week: date_score_key (semana en que se generó el score)
+        origination_week: semana de origen del score
         metric_type: nombre del target (ej: 'b_malo8_13', 'first_payment_default2')
-        lag_semanas: ventana de observación del target; date_outcome_key = score_week + lag
+        lag_semanas: ventana de observación del target; execution_week = origination_week + lag
     """
-    date_outcome_key = score_week + timedelta(weeks=lag_semanas)
+    execution_week = origination_week + timedelta(weeks=lag_semanas)
     df = _build_performance_df(
         session, model_registry_id,
-        date_score_key=score_week,
-        date_outcome_key=date_outcome_key,
+        origination_week=origination_week,
+        execution_week=execution_week,
         metric_type=metric_type,
     )
     if df.empty:

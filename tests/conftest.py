@@ -7,8 +7,8 @@ Estructura de datos:
 - Target: test_target con lag_semanas=4, ascending_order=False
 - WEEK_0 = semana de referencia (reference_flag=1)
 - WEEK_4 = semana actual (4 semanas después = current_week)
-- score_week para test_target = WEEK_0 (current_week - lag = WEEK_4 - 4)
-- date_outcome_key para test_target = WEEK_4 (score_week + lag)
+- origination_week para test_target = WEEK_0 (current_week - lag = WEEK_4 - 4)
+- execution_week para test_target = WEEK_4 (origination_week + lag)
 
 Anomalías inyectadas:
 - s1: distribución estable → PSI ≈ 0
@@ -32,7 +32,8 @@ from sqlalchemy.orm import sessionmaker
 from mlmonitor.db.models import (
     Base,
     FactDistributions,
-    FactPerformanceOutcomes,
+    FactPerformanceBinned,
+    FactPerformanceIndividual,
     MetaMetricThresholds,
     MetaModelRegistry,
     MetaVariables,
@@ -205,8 +206,8 @@ def _insert_distributions(session, registry_map, var_id_map):
 
 def _insert_performance_outcomes(session, registry_map, var_id_map):
     rows = []
-    score_week = WEEK_0
-    outcome_week = _week_date(TARGET_LAG)  # WEEK_0 + 4 = WEEK_4
+    origination_week = WEEK_0
+    execution_week = _week_date(TARGET_LAG)  # WEEK_0 + 4 = WEEK_4
 
     for seg_id, reg_id in registry_map.items():
         for i, (score_bin, midpoint) in enumerate(SCORE_BINS):
@@ -223,10 +224,10 @@ def _insert_performance_outcomes(session, registry_map, var_id_map):
                 else:
                     event_rate = max(0.01, 0.80 - i * 0.08)
 
-            rows.append(FactPerformanceOutcomes(
+            rows.append(FactPerformanceBinned(
                 model_registry_id=reg_id,
-                date_score_key=score_week,
-                date_outcome_key=outcome_week,
+                origination_week=origination_week,
+                execution_week=execution_week,
                 metric_type=TARGET_NAME,
                 score_bin=score_bin,
                 score_midpoint=midpoint,
@@ -235,6 +236,32 @@ def _insert_performance_outcomes(session, registry_map, var_id_map):
                 sum_predicted_score=float(count_total * midpoint),
             ))
 
+    session.add_all(rows)
+    session.flush()
+
+
+def _insert_performance_individual(session, registry_map):
+    rows = []
+    origination_iso = 202501   # ISO week corresponding to WEEK_0 (2025-W01)
+    execution_iso = 202505     # origination + TARGET_LAG (4 weeks) = 2025-W05
+
+    for seg_id, reg_id in registry_map.items():
+        for i, (score_bin, midpoint) in enumerate(SCORE_BINS):
+            if seg_id == "s1":
+                flag = 1 if i < 5 else 0  # eventos en bins de score bajo
+            else:
+                flag = 1 if i in (2, 3) else 0  # inversión para testing
+
+            rows.append(FactPerformanceIndividual(
+                credito_id=f"{seg_id}_credit_{i:03d}",
+                model_registry_id=reg_id,
+                origination_week=origination_iso,
+                execution_week=execution_iso,
+                fnpuntaje=float(midpoint),
+                semanas_vida=TARGET_LAG,
+                ventana=TARGET_NAME,
+                flag=flag,
+            ))
     session.add_all(rows)
     session.flush()
 
@@ -263,6 +290,7 @@ def populated_engine(engine):
         _insert_thresholds(session)
         _insert_distributions(session, registry_map, var_id_map)
         _insert_performance_outcomes(session, registry_map, var_id_map)
+        _insert_performance_individual(session, registry_map)
     return engine
 
 
@@ -288,13 +316,13 @@ def current_week():
 
 @pytest.fixture
 def score_week():
-    """WEEK_0 — score_week para el target con lag=4 cuando current_week=WEEK_4."""
+    """WEEK_0 — origination_week para el target con lag=4 cuando current_week=WEEK_4."""
     return WEEK_0
 
 
 @pytest.fixture
 def performance_week():
-    """Alias de score_week — semana de score correspondiente al lag del target."""
+    """Alias de score_week — semana de origen del score correspondiente al lag del target."""
     return WEEK_0
 
 

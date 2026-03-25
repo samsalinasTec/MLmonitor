@@ -3,7 +3,7 @@ Tests de integración para MetricsCalculator.
 
 Verifica que:
 - El calculador lee targets desde META_VARIABLES (no lista hardcodeada)
-- Cada target usa su propio lag para calcular score_week
+- Cada target usa su propio lag para calcular origination_week
 - Las métricas se escriben en FACT_METRICS_HISTORY con los nombres correctos
 - No hay duplicados en re-ejecución
 - s2 genera alerta de ordering violations (anomalía inyectada en fixtures)
@@ -63,13 +63,13 @@ class TestMetricsCalculator:
             f"Métricas disponibles: {[k for k in metrics if 'gini' in k]}"
         )
 
-    def test_per_target_lag_used_for_score_week(
+    def test_per_target_lag_used_for_origination_week(
         self, session, current_week, segment_ids, metric_name_map
     ):
         """
-        Cada target usa su propio lag_semanas para determinar el score_week.
-        score_week = current_week - lag_semanas
-        Verificar que el details de la métrica gini tiene el score_week correcto.
+        Cada target usa su propio lag_semanas para determinar el origination_week.
+        origination_week = current_week - lag_semanas
+        Verificar que el details de la métrica gini tiene el origination_week correcto.
         """
         calc = MetricsCalculator(session)
         calc.run_for_model(MODEL_ID, current_week)
@@ -80,10 +80,10 @@ class TestMetricsCalculator:
         gini_key = f"gini_{TARGET_NAME}"
         if gini_key in metrics:
             details = metrics[gini_key].get("details", {})
-            expected_score_week = _week_date(0).isoformat()  # current_week - TARGET_LAG
-            assert details.get("score_week") == expected_score_week, (
-                f"score_week esperado: {expected_score_week}, "
-                f"obtenido: {details.get('score_week')}"
+            expected_origination_week = _week_date(0).isoformat()  # current_week - TARGET_LAG
+            assert details.get("origination_week") == expected_origination_week, (
+                f"origination_week esperado: {expected_origination_week}, "
+                f"obtenido: {details.get('origination_week')}"
             )
 
     def test_s2_ordering_violation_alert(

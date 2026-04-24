@@ -1,0 +1,8 @@
+flowchart LR
+  A[push a main] --> B[Actions: pytest]
+  B -->|pasa| C[buildx build<br/>--platform linux/amd64]
+  C --> D[push ECR con tag<br/>sha-&lt;git-short-sha&gt;]
+  D --> E[registrar revisión<br/>task definition]
+  E --> F{¿merge a release?}
+  F -->|no| G[queda como sha-&lt;sha&gt;]
+  F -->|sí, manual approval| H[retag como latest<br/>en ECR]

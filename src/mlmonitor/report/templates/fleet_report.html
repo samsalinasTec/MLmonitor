@@ -22,7 +22,12 @@
         <p><strong>Variable objetivo:</strong> 26_42</p>
         <p><strong>Fecha de generación:</strong> {{ generation_date }}</p>
         <p><strong>Semana de cálculo:</strong> {{ context.calculation_week }}</p>
-        <p><strong>Límite de datos de performance:</strong> {{ context.performance_week }} (lag estructural: {{ context.lag_semanas }} semanas)</p>
+        <p><strong>Cobertura de performance por target:</strong></p>
+        <ul style="margin:0.1cm 0 0.2cm 0.5cm; font-size:10pt;">
+        {% for cov in context.performance_coverage %}
+            <li><code>{{ cov.target }}</code>: hasta {{ cov.cutoff_date }} (lag {{ cov.lag }}s)</li>
+        {% endfor %}
+        </ul>
         <p><strong>Sub-scorecards monitoreados:</strong> {{ context.fleet_summary.total }} de {{ context.total_submodels }}</p>
     </div>
 </div>
@@ -111,7 +116,7 @@
     <h1>Ranking de Urgencia — Todos los Segmentos</h1>
     <p style="font-size:9pt; color:#666; margin-bottom:0.4cm;">
         Ordenado por nivel de urgencia: CRÍTICO → WARNING → OK.
-        Los valores de performance (Gini, KS, Tasa de Incumplimiento) corresponden a la semana {{ context.performance_week }} (lag {{ context.lag_semanas }}s).
+        Los valores de performance (Gini, KS, Tasa de Incumplimiento) tienen lag estructural de {{ context.performance_coverage[0].lag }} a {{ context.performance_coverage[-1].lag }} semanas según el target.
     </p>
     <table class="ranking-table">
         <thead>
@@ -147,7 +152,7 @@
 
     <div class="footer-note">
         <p>Este reporte fue generado automáticamente por <strong>MLMonitor v0.1.0</strong>.</p>
-        <p>Las métricas de performance (Gini, KS, Tasa de Incumplimiento, Tasa de Cumplimiento) tienen un lag estructural de <strong>{{ context.lag_semanas }} semanas</strong>.</p>
+        <p>Las métricas de performance tienen lags estructurales de <strong>{{ context.performance_coverage[0].lag }} a {{ context.performance_coverage[-1].lag }} semanas</strong> según el target.</p>
         <p>Generado el: {{ generation_date }} | Modelo: {{ context.model_id }}</p>
     </div>
 </div>

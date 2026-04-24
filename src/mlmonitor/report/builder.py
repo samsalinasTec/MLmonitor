@@ -61,21 +61,33 @@ class ReportBuilder:
         )
         model_name = model_regs[0].model_name if model_regs else model_id
 
-        # Determinar performance_week de display usando el primer target del primer segmento.
-        # Fallback: MetaModelRegistry.lag_semanas o 8 semanas.
-        primary_lag = (model_regs[0].lag_semanas or 8) if model_regs else 8
+        # Cobertura de performance por target — cada uno tiene su propio lag y cutoff.
+        all_targets = []
         if model_regs:
-            first_target = (
+            all_targets = (
                 self.session.query(MetaVariables)
                 .filter(
                     MetaVariables.model_registry_id == model_regs[0].id,
                     MetaVariables.variable_rol == "target",
                     MetaVariables.valid_to.is_(None),
                 )
-                .first()
+                .all()
             )
-            if first_target and first_target.lag_semanas:
-                primary_lag = first_target.lag_semanas
+        performance_coverage = []
+        performance_weeks: dict[str, date] = {}
+        for tv in sorted(all_targets, key=lambda v: v.lag_semanas or 8):
+            lag = tv.lag_semanas or 8
+            cutoff = calculation_week - timedelta(weeks=lag)
+            performance_coverage.append({
+                "target": tv.variable_name,
+                "lag": lag,
+                "cutoff_date": cutoff,
+            })
+            performance_weeks[tv.variable_name] = cutoff
+
+        primary_lag = all_targets[0].lag_semanas if all_targets else 8
+        if primary_lag is None:
+            primary_lag = 8
         performance_week = calculation_week - timedelta(weeks=primary_lag)
 
         # Cargar mapa de métricas: {metric_id → metric_name}
@@ -133,6 +145,8 @@ class ReportBuilder:
             segments=segments,
             fleet_summary=fleet_summary,
             total_submodels=len(model_regs),
+            performance_coverage=performance_coverage,
+            performance_weeks=performance_weeks,
         )
 
         # Llamada al LLM si hay analista
@@ -241,9 +255,9 @@ class ReportBuilder:
         else:
             overall_status = "OK"
 
-        # Business table — score_week es la semana de performance del target primario
+        # Business table — cada target tiene su propio origination_week (calculado internamente)
         business_df = get_business_metrics_table(
-            self.session, model_registry_id, performance_week
+            self.session, model_registry_id, calculation_week
         )
         business_table = []
         if not business_df.empty:

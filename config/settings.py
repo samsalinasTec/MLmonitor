@@ -17,7 +17,7 @@ class Settings(BaseSettings):
     bedrock_model_id: str = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
 
     # S3 — vacío = upload deshabilitado
-    s3_bucket: str = "ml-monitoring-reports-credito"
+    s3_bucket: str = ""
     s3_prefix: str = "mlmonitor/reports"
 
     # SES

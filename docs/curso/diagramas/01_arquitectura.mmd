@@ -1,0 +1,11 @@
+flowchart LR
+  U[Usuario<br/>sam.salinas] -->|sube CSVs| S3i[(S3 bucket<br/>inputs/raw_tables/)]
+  EB[EventBridge Scheduler<br/>mlmonitor-weekly<br/>MON 14:00 UTC] -->|RunTask| ECS{{ECS Fargate<br/>task mlmonitor}}
+  ECR[(ECR<br/>mlmonitor:latest)] -->|pull| ECS
+  S3i -->|sync| ECS
+  ECS -->|INSERT/SELECT| RDS[(RDS Postgres 16<br/>ml-monitoring-db)]
+  ECS -->|InvokeModel| BR[Bedrock<br/>Haiku 4.5]
+  ECS -->|PutObject PDF| S3o[(S3 bucket<br/>mlmonitor/reports/)]
+  ECS -->|SendRawEmail| SES[SES<br/>sandbox]
+  ECS -->|stdout| CW[(CloudWatch Logs<br/>/ecs/mlmonitor)]
+  ECS -.->|GetSecretValue| SM[(Secrets Manager<br/>ml-monitoring/rds,<br/>ml-monitoring/SES)]

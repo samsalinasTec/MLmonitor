@@ -5,8 +5,8 @@ Estructura de datos:
 - MODEL_ID = "TEST_MODEL_V1", segmentos s1 y s2
 - Inputs: num_var (numérico), cat_var (categórico)
 - Target: test_target con lag_semanas=4, ascending_order=False
-- WEEK_0 = semana de referencia (reference_flag=1)
-- WEEK_4 = semana actual (4 semanas después = current_week)
+- Baseline: META_BASELINE_DISTRIBUTIONS con distribuciones de referencia
+- WEEK_4 = semana actual de produccion (current_week)
 - origination_week para test_target = WEEK_0 (current_week - lag = WEEK_4 - 4)
 - execution_week para test_target = WEEK_4 (origination_week + lag)
 
@@ -34,6 +34,7 @@ from mlmonitor.db.models import (
     FactDistributions,
     FactPerformanceBinned,
     FactPerformanceIndividual,
+    MetaBaselineDistributions,
     MetaMetricThresholds,
     MetaModelRegistry,
     MetaVariables,
@@ -44,7 +45,7 @@ from mlmonitor.db.session import get_session
 # Constantes
 # ---------------------------------------------------------------------------
 
-WEEK_0 = date(2025, 1, 6)    # Semana de referencia (reference_flag=1)
+WEEK_0 = date(2025, 1, 6)    # Base temporal para fixtures
 MODEL_ID = "TEST_MODEL_V1"
 SEGMENTS = ["s1", "s2"]
 TARGET_NAME = "test_target"
@@ -151,7 +152,38 @@ def _insert_thresholds(session):
     return {r.metric_name: r.id for r in rows}
 
 
-def _insert_distributions(session, registry_map, var_id_map):
+def _insert_baseline_distributions(session, registry_map, var_id_map):
+    """Distribuciones de referencia del baseline → META_BASELINE_DISTRIBUTIONS."""
+    rows = []
+
+    for seg_id, reg_id in registry_map.items():
+        num_var_id = var_id_map[(seg_id, "num_var")]
+        cat_var_id = var_id_map[(seg_id, "cat_var")]
+
+        # ---- num_var: baseline (5 bins uniformes) ----
+        ref_probs = [0.20, 0.20, 0.20, 0.20, 0.20]
+        for i, pct in enumerate(ref_probs):
+            rows.append(MetaBaselineDistributions(
+                model_registry_id=reg_id, variable_id=num_var_id,
+                bin_label=f"bin_{i+1}", bin_count=int(pct * 1000),
+                bin_percentage=pct, null_count=0, total_records=1000,
+            ))
+
+        # ---- cat_var: baseline (estable) ----
+        cat_probs = {"A": 0.50, "B": 0.30, "C": 0.20}
+        for cat, pct in cat_probs.items():
+            rows.append(MetaBaselineDistributions(
+                model_registry_id=reg_id, variable_id=cat_var_id,
+                bin_label=cat, bin_count=int(pct * 1000),
+                bin_percentage=pct, null_count=0, total_records=1000,
+            ))
+
+    session.add_all(rows)
+    session.flush()
+
+
+def _insert_production_distributions(session, registry_map, var_id_map):
+    """Distribuciones de produccion (semana actual) → FACT_DISTRIBUTIONS."""
     rows = []
     current_week = _week_date(TARGET_LAG)  # WEEK_4
 
@@ -159,46 +191,34 @@ def _insert_distributions(session, registry_map, var_id_map):
         num_var_id = var_id_map[(seg_id, "num_var")]
         cat_var_id = var_id_map[(seg_id, "cat_var")]
 
-        # ---- num_var: referencia (5 bins uniformes) ----
-        ref_probs = [0.20, 0.20, 0.20, 0.20, 0.20]
-        for i, pct in enumerate(ref_probs):
-            rows.append(FactDistributions(
-                model_registry_id=reg_id, variable_id=num_var_id,
-                reference_week=WEEK_0, reference_flag=1,
-                bin_label=f"bin_{i+1}", bin_count=int(pct * 1000),
-                bin_percentage=pct, null_count=0, total_records=1000,
-            ))
-
         # ---- num_var: semana actual ----
         if seg_id == "s1":
-            # s1: distribución estable → PSI ≈ 0
             cur_probs = [0.20, 0.20, 0.20, 0.20, 0.20]
             null_c = 0
         else:
-            # s2: distribución concentrada en bin_1 → PSI CRITICAL (> 0.20)
+            # s2: distribucion concentrada en bin_1 → PSI CRITICAL (> 0.20)
             cur_probs = [0.80, 0.10, 0.05, 0.03, 0.02]
             null_c = 200  # 20% null rate → CRITICAL
 
         for i, pct in enumerate(cur_probs):
             rows.append(FactDistributions(
                 model_registry_id=reg_id, variable_id=num_var_id,
-                reference_week=current_week, reference_flag=0,
+                origination_week=current_week,
                 bin_label=f"bin_{i+1}", bin_count=int(pct * 1000),
                 bin_percentage=pct,
                 null_count=null_c if i == 0 else 0,
                 total_records=1000,
             ))
 
-        # ---- cat_var: referencia y semana actual (estable) ----
+        # ---- cat_var: semana actual (estable) ----
         cat_probs = {"A": 0.50, "B": 0.30, "C": 0.20}
         for cat, pct in cat_probs.items():
-            for wk, rflag in [(WEEK_0, 1), (current_week, 0)]:
-                rows.append(FactDistributions(
-                    model_registry_id=reg_id, variable_id=cat_var_id,
-                    reference_week=wk, reference_flag=rflag,
-                    bin_label=cat, bin_count=int(pct * 1000),
-                    bin_percentage=pct, null_count=0, total_records=1000,
-                ))
+            rows.append(FactDistributions(
+                model_registry_id=reg_id, variable_id=cat_var_id,
+                origination_week=current_week,
+                bin_label=cat, bin_count=int(pct * 1000),
+                bin_percentage=pct, null_count=0, total_records=1000,
+            ))
 
     session.add_all(rows)
     session.flush()
@@ -242,23 +262,22 @@ def _insert_performance_outcomes(session, registry_map, var_id_map):
 
 def _insert_performance_individual(session, registry_map):
     rows = []
-    origination_iso = 202501   # ISO week corresponding to WEEK_0 (2025-W01)
-    execution_iso = 202505     # origination + TARGET_LAG (4 weeks) = 2025-W05
+    origination_week = WEEK_0                       # semana de surtimiento (Date)
+    execution_week = _week_date(TARGET_LAG)          # semana de observacion (Date)
 
     for seg_id, reg_id in registry_map.items():
         for i, (score_bin, midpoint) in enumerate(SCORE_BINS):
             if seg_id == "s1":
                 flag = 1 if i < 5 else 0  # eventos en bins de score bajo
             else:
-                flag = 1 if i in (2, 3) else 0  # inversión para testing
+                flag = 1 if i in (2, 3) else 0  # inversion para testing
 
             rows.append(FactPerformanceIndividual(
                 credito_id=f"{seg_id}_credit_{i:03d}",
                 model_registry_id=reg_id,
-                origination_week=origination_iso,
-                execution_week=execution_iso,
+                origination_week=origination_week,
+                execution_week=execution_week,
                 fnpuntaje=float(midpoint),
-                semanas_vida=TARGET_LAG,
                 ventana=TARGET_NAME,
                 flag=flag,
             ))
@@ -288,7 +307,8 @@ def populated_engine(engine):
         registry_map = _insert_registry(session)
         var_id_map = _insert_variables(session, registry_map)
         _insert_thresholds(session)
-        _insert_distributions(session, registry_map, var_id_map)
+        _insert_baseline_distributions(session, registry_map, var_id_map)
+        _insert_production_distributions(session, registry_map, var_id_map)
         _insert_performance_outcomes(session, registry_map, var_id_map)
         _insert_performance_individual(session, registry_map)
     return engine

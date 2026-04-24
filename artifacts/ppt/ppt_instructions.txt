@@ -1,0 +1,497 @@
+================================================================================
+INSTRUCCIONES PARA GENERAR PRESENTACIÓN (PPT) CON python-pptx
+================================================================================
+
+OBJETIVO:
+Genera una presentación profesional en PowerPoint (.pptx) usando la librería
+python-pptx. La presentación es para el cliente Círculo de Crédito y debe
+comunicar la propuesta técnica de un agente de atención 24/7 para Otorgantes
+de Crédito.
+
+================================================================================
+DISEÑO Y ESTILO VISUAL
+================================================================================
+
+REFERENCIA DE DISEÑO:
+- Estilo inspirado en Anthropic (anthropic.com): minimalista, elegante, degradados
+  en tonos naranja/ámbar/crema.
+
+IMÁGENES DE REFERENCIA (revisar todas para capturar el estilo completo):
+  1. Artifacts/WorkSheet.png
+     → Cronograma del proyecto. Usa paleta naranja sobre fondo claro.
+       Referencia para barras, headers y tipografía.
+  2. Artifacts/referenceStyle1.png
+     → Screenshot de anthropic.com o diseño de referencia Anthropic.
+       Referencia para degradados, layout general y estética minimalista.
+  3. Artifacts/referenceStyle2.png
+     → Screenshot adicional de anthropic.com o material Anthropic.
+       Referencia para paleta de colores, cards, y estilo de presentación
+       de información.
+
+  INSTRUCCIÓN: Analiza las 3 imágenes de referencia y replica el estilo visual
+  (degradados, espaciado, proporciones, contraste) en todas las diapositivas.
+  No copies el contenido, solo el estilo.
+
+PALETA DE COLORES:
+- Naranja principal: #FF6B35 (accent, títulos de sección, barras)
+- Naranja oscuro: #E85D26 (degradados, hover)
+- Naranja suave/crema: #FFF3EC (fondos, backgrounds de sección)
+- Blanco: #FFFFFF (fondo principal de la mayoría de slides)
+- Gris oscuro: #1A1A2E (texto principal, títulos)
+- Gris medio: #4A4A68 (texto secundario, descripciones)
+- Gris claro: #F5F5F7 (fondos alternos, cajas)
+- Negro: #000000 (texto de alto contraste donde se necesite)
+
+TIPOGRAFÍA:
+- python-pptx no embebe Google Fonts fácilmente, así que usa fuentes seguras:
+  - Títulos: "Calibri" bold, tamaño 28-36pt
+  - Subtítulos: "Calibri" semibold, tamaño 18-24pt
+  - Body: "Calibri", tamaño 14-16pt
+  - Notas/captions: "Calibri Light", tamaño 11-12pt
+
+REGLAS DE DISEÑO:
+- Máximo 5-6 líneas de texto por diapositiva. Menos es más.
+- Usar íconos Unicode cuando sea posible (✓, →, ●, ◉, ▸, ★, ⚡, 🔒, 📊).
+- Degradados naranja en las barras superiores o laterales de cada slide.
+- Bastante espacio en blanco (no saturar).
+- Los datos en tablas o cajas con bordes redondeados (simular con shapes).
+- Footer discreto en todas las slides: "Círculo de Crédito | Confidencial"
+- Aspect ratio: 16:9 (widescreen).
+- Cada slide debe tener una barra superior o lateral naranja como elemento 
+  de identidad visual consistente.
+
+TAMAÑO DE PRESENTACIÓN: Widescreen 16:9 (33.867cm x 19.05cm)
+
+================================================================================
+ESTRUCTURA DE DIAPOSITIVAS
+================================================================================
+
+--- SLIDE 1: PORTADA ---
+Tipo: Portada / Cover
+Contenido:
+  - Título grande: "Modernización del Modelo de Atención a Otorgantes de Crédito (24/7)"
+  - Subtítulo: "Brindando certeza y confianza al ecosistema financiero de México"
+  - Línea inferior: "Experiencia al Cliente — Transformación Digital"
+  - Fecha: "Marzo 2026"
+  - Logo placeholder: Rectángulo gris con texto "LOGO CÍRCULO DE CRÉDITO"
+Diseño:
+  - Fondo blanco con degradado naranja suave en la parte inferior o lateral.
+  - Título en gris oscuro (#1A1A2E), bold, centrado o alineado a la izquierda.
+  - Subtítulo en naranja principal (#FF6B35).
+  - Mantener mucho espacio en blanco. Minimalista.
+
+--- SLIDE 2: EL RETO ACTUAL ---
+Tipo: Contexto / Problema
+Título: "El Reto Actual"
+Contenido (3 columnas o 3 cajas):
+  CAJA 1 — "Disponibilidad Limitada"
+    Ícono: ⏰
+    Texto: "Atención reactiva, dependiente de horarios humanos. Sin soporte 
+    fuera de ventanilla."
+  
+  CAJA 2 — "Riesgo de Continuidad"
+    Ícono: ⚠️
+    Texto: "Los Otorgantes carecen de soporte cuando hay caídas de servicio 
+    fuera de horario."
+  
+  CAJA 3 — "Datos No Estructurados"
+    Ícono: 📋
+    Texto: "Información valiosa se pierde en correos no estructurados. 
+    No hay trazabilidad."
+Diseño:
+  - 3 cajas/cards en fila horizontal con fondo gris claro (#F5F5F7).
+  - Borde superior naranja en cada caja.
+  - Texto corto, impactante.
+
+--- SLIDE 3: LA SOLUCIÓN ---
+Tipo: Propuesta de valor
+Título: "La Solución: Agente de Atención 24/7"
+Contenido:
+  Texto principal (2-3 líneas máximo):
+    "Un agente conversacional inteligente que opera 24/7, resuelve consultas 
+    frecuentes de forma autónoma, y escala a humanos solo cuando es necesario. 
+    Modelo híbrido: IA + humanos."
+  
+  4 bullets en iconos:
+    ✓ Atención continua sin dependencia de horarios
+    ✓ Resolución autónoma de FAQs con Knowledge Base aprobada
+    ✓ Creación automática de tickets con datos completos
+    ✓ Escalamiento gobernado a equipo humano con contexto
+  
+  Dato destacado (caja naranja):
+    "Universo piloto: ~500 Otorgantes | ~100 casos/mes"
+Diseño:
+  - Texto alineado a la izquierda.
+  - Caja naranja con dato destacado en la parte inferior.
+  - Mucho espacio en blanco.
+
+--- SLIDE 4: OBJETIVOS DE NEGOCIO ---
+Tipo: Tabla / Indicadores
+Título: "Objetivos de Negocio"
+Contenido (tabla de 5 filas):
+  | #  | Objetivo               | Descripción                                      |
+  |----|------------------------|--------------------------------------------------|
+  | 1  | Continuidad 24/7       | Servicio activo fuera del horario humano estándar |
+  | 2  | Resolución autónoma    | Resolver FAQs sin intervención humana             |
+  | 3  | Calidad del caso       | Tickets generados automáticamente, campos completos |
+  | 4  | Escalamiento gobernado | Reglas claras para derivar a humanos              |
+  | 5  | Data para decisiones   | Métricas y evidencia para evaluar el escalamiento |
+Diseño:
+  - Tabla limpia con header naranja.
+  - Filas alternando blanco y gris muy claro.
+  - Sin bordes pesados, estilo minimalista.
+
+--- SLIDE 5: KPIs TARGET ---
+Tipo: Métricas / Dashboard
+Título: "KPIs del Piloto"
+Contenido (4 métricas grandes en cuadrícula 2x2):
+  MÉTRICA 1:
+    Número grande: ">80%"
+    Label: "Tasa de Contención"
+    Descripción pequeña: "Interacciones resueltas sin humano"
+  
+  MÉTRICA 2:
+    Número grande: ">90%"
+    Label: "First Contact Resolution"
+    Descripción pequeña: "Resolución en el primer contacto"
+  
+  MÉTRICA 3:
+    Número grande: ">95%"
+    Label: "Calidad de Registro"
+    Descripción pequeña: "Casos con campos obligatorios completos"
+  
+  MÉTRICA 4:
+    Número grande: ">95%"
+    Label: "Escalamiento Correcto"
+    Descripción pequeña: "Adherencia a reglas de escalamiento"
+Diseño:
+  - 4 cajas grandes en grid 2x2.
+  - Número en naranja (#FF6B35), grande (36-40pt).
+  - Label en gris oscuro, bold.
+  - Descripción en gris medio, pequeña.
+
+--- SLIDE 6: ENTREGABLES ESPECÍFICOS ---
+Tipo: Lista de entregables
+Título: "Entregables del Piloto"
+Contenido:
+  ENTREGABLE 1 — Canal WhatsApp (MVP)
+    "Agente conversacional vía WhatsApp Business API.
+    El Otorgante interactúa desde su WhatsApp habitual."
+    Incluye: Generación automática de tickets con clasificación de severidad,
+    seguimiento de folios y captura de evidencia.
+
+  ENTREGABLE 2 — Canal Web Chat
+    "Widget de chat embebido en el portal del cliente.
+    Comunicación en tiempo real vía WebSocket."
+    Incluye: Las mismas capacidades de ticketing y seguimiento que WhatsApp.
+
+  ENTREGABLE 3 — Canal Email (futuro cercano)
+    "Integración con correo electrónico para recepción
+    y respuesta automatizada de casos."
+
+  Nota al pie de los 3 entregables (texto discreto):
+    "Cada canal incluye: creación automática de tickets con campos
+    obligatorios, clasificación de severidad, seguimiento de folios,
+    y consola operativa interna para el equipo de CX (Retool)."
+Diseño:
+  - 3 entregables principales como cards grandes.
+  - WhatsApp con ícono 📱, Web con 🌐, Email con ✉️.
+  - Cada card con fondo gris claro y borde superior naranja.
+  - Nota al pie en gris medio, tamaño 12pt, mostrando que el ticketing
+    y el dashboard son capacidades transversales, no entregables separados.
+
+--- SLIDE 7: CATÁLOGO DE INTENCIONES ---
+Tipo: Tabla agrupada
+Título: "¿Qué puede resolver el Agente?"
+Subtítulo: "11 intenciones en 3 categorías"
+Contenido:
+  GRUPO 1 — "Informativas (FAQs)" — Color: Verde suave o naranja claro
+    I-01: Requisitos de servicio
+    I-03: Estatus del servicio
+    I-04: Horarios de atención
+    I-05: Canales de soporte
+    Nota: "Se resuelven desde Knowledge Base aprobada"
+  
+  GRUPO 2 — "Operativas (Acciones)" — Color: Naranja medio
+    A-01: Crear ticket (Incidencia/Consulta)
+    A-02: Crear ticket (Error Plataforma)
+    A-03: Crear ticket (Error API)
+    A-04: Seguimiento de folio
+    A-06: Solicitud de contacto humano
+    Nota: "Requieren captura de datos y creación de caso"
+  
+  GRUPO 3 — "Autenticación" — Color: Naranja oscuro
+    S-01: Identificación de empresa
+    S-02: Validación de usuario autorizado
+    Nota: "Gate de seguridad antes de cualquier acción"
+Diseño:
+  - 3 columnas o 3 bloques apilados con diferentes tonos de naranja.
+  - Cada grupo claramente separado visualmente.
+
+--- SLIDE 8: FLUJOS FUNCIONALES ---
+Tipo: Diagrama de flujo simplificado
+Título: "Flujos Funcionales Core"
+Contenido (3 flujos como flechas horizontales):
+  F-01 — ATENCIÓN ESTÁNDAR (Happy Path):
+    Saludo → Identificación → Clasificación → Respuesta KB → Confirmación → Cierre
+  
+  F-02 — CREACIÓN DE CASO:
+    Confirmar intención → Captura de datos → Severidad → Generar ticket
+  
+  F-03 — SEGUIMIENTO:
+    Folio existente → Consultar estatus → Reportar → Escalar si estancado
+Diseño:
+  - Cada flujo como una fila de cajas conectadas con flechas (→).
+  - Cajas redondeadas con fondo naranja suave.
+  - Flechas en naranja oscuro.
+  - Usar shapes de python-pptx (RoundedRectangle + connectors o flechas).
+
+--- SLIDE 9: GOBERNANZA DE ESCALAMIENTO ---
+Tipo: Reglas / Políticas
+Título: "¿Cuándo interviene un Humano?"
+Contenido:
+  4 reglas en cajas:
+    🔴 SEVERIDAD: Se detecta incidente S1 (caída total) o S2 (degradación)
+    🔒 RIESGO: Datos sensibles detectados o usuario no autorizado
+    ⚡ BAJA CONFIANZA: El agente no encuentra respuesta en la KB
+    😤 FRUSTRACIÓN: 2 intentos fallidos de resolución
+  
+  Caja destacada al fondo:
+    "REGLA DE HANDOFF: Toda transferencia incluye resumen + evidencia + 
+    siguiente paso recomendado. El humano recibe contexto completo."
+Diseño:
+  - 4 cajas horizontales o en grid 2x2.
+  - Cada caja con un ícono/emoji a la izquierda y borde lateral naranja.
+  - Caja de handoff al fondo con fondo naranja y texto blanco.
+
+--- SLIDE 10: ARQUITECTURA TÉCNICA ---
+Tipo: Diagrama de arquitectura (imagen)
+Título: "Arquitectura y Stack Tecnológico"
+Contenido:
+  *** PLACEHOLDER — IMAGEN DE DIAGRAMA DE ARQUITECTURA ***
+  El diagrama de arquitectura se proporcionará como imagen externa.
+  Insertar la imagen centrada en el slide, ocupando la mayor parte del espacio.
+
+  Si la imagen aún no existe, dejar el slide con:
+  - El título "Arquitectura y Stack Tecnológico"
+  - Un rectángulo gris claro centrado con texto: "[Diagrama de arquitectura]"
+  - La tabla resumen debajo como referencia de los componentes:
+
+    | Componente           | Tecnología              |
+    |----------------------|-------------------------|
+    | API / Backend        | FastAPI (Python)        |
+    | Orquestación         | LangGraph               |
+    | LLM                  | Claude Sonnet (Bedrock) |
+    | Knowledge Base       | pgvector (PostgreSQL)   |
+    | Base de datos        | PostgreSQL              |
+    | Cache de sesión      | Redis                   |
+    | Almacenamiento       | AWS S3                  |
+    | Canal WhatsApp       | Twilio / Meta Cloud API |
+    | Canal Web            | React + Tailwind        |
+    | Observabilidad       | LangSmith               |
+    | Infra                | AWS (ECS, RDS, ElastiCache) |
+    | Dashboard            | Retool (MVP)            |
+Diseño:
+  - Imagen centrada con padding generoso.
+  - Si se muestra la tabla resumen (cuando no hay imagen), usar el mismo estilo
+    minimalista con header naranja que las demás tablas.
+  - Barra superior naranja como en el resto de slides.
+
+--- SLIDE 11: ¿POR QUÉ NO SALESFORCE? ---
+Tipo: Comparación / Justificación
+Título: "¿Por qué un Stack Abierto y no Salesforce Agentforce?"
+Contenido (tabla comparativa):
+  | Criterio          | Salesforce Agentforce     | Stack Abierto (propuesto) |
+  |-------------------|---------------------------|---------------------------|
+  | Control           | Dependencia del vendor    | Control total, iteración rápida |
+  | Costo             | Licencias altas para MVP  | Pay-as-you-go, proporcional |
+  | LLM               | Einstein (propio SF)      | Claude Sonnet (mejor en español) |
+  | Portabilidad      | Lock-in significativo     | PostgreSQL = migración trivial |
+  | Time-to-market    | Configuración compleja    | MVP en 4 semanas |
+Diseño:
+  - Tabla con 2 columnas principales.
+  - Salesforce en gris (neutral/negativo).
+  - Stack Abierto en naranja (positivo).
+  - Checkmarks ✓ verdes en la columna del stack abierto.
+
+--- SLIDE 12: SEGURIDAD Y CUMPLIMIENTO ---
+Tipo: Confianza / Compliance
+Título: "Seguridad y Cumplimiento"
+Contenido:
+  6 principios en cajas (grid 3x2):
+    🔒 MÍNIMO ACCESO
+      "No se almacenan datos sensibles (PII/PCI) en logs de chat"
+
+    🛡️ AUTENTICACIÓN
+      "Gate de seguridad obligatorio: empresa + usuario autorizado antes
+      de cualquier acción"
+
+    📋 TRAZABILIDAD
+      "Cada interacción queda registrada con audit trail completo"
+
+    ☁️ INFRAESTRUCTURA AWS
+      "Servicios administrados con cifrado en tránsito y en reposo
+      (RDS, ElastiCache, S3)"
+
+    🚫 DATOS NO SALEN DE AWS
+      "Bedrock procesa sin retener datos. No hay transferencia a terceros.
+      Los datos nunca salen de la infraestructura AWS"
+
+    🧹 FILTRO DE DATOS SENSIBLES
+      "Detección y enmascaramiento automático de PII/PCI (CURP, RFC,
+      tarjetas) antes de enviar al LLM"
+Diseño:
+  - 6 cajas en grid 3 filas x 2 columnas con íconos grandes.
+  - Fondo gris claro, borde izquierdo naranja.
+  - Tono serio y confiable.
+
+--- SLIDE 13: ESTIMACIÓN DE COSTOS ---
+Tipo: Tabla de costos
+Título: "Estimación de Costos de Infraestructura Mensual (MVP)"
+Subtítulo: "Basado en ~500 usuarios, ~100 casos/mes | Región: us-east-1"
+Contenido:
+  TABLA DE COSTOS (precios verificados marzo 2026):
+    | Servicio                  | Configuración MVP              | Costo estimado/mes |
+    |---------------------------|--------------------------------|--------------------|
+    | AWS Bedrock (Claude Sonnet) | ~100 convs × ~4K tokens avg. Input: $3/M tokens, Output: $15/M tokens | ~$3-8 USD |
+    | AWS RDS (PostgreSQL)      | db.t4g.micro (2 vCPU, 1GB RAM) + 20GB gp3. Sin Multi-AZ | ~$25-30 USD |
+    | AWS ElastiCache (Redis)   | cache.t3.micro (2 vCPU, 0.5GB). On-demand: $0.017/hr | ~$12 USD |
+    | AWS ECS (Fargate)         | 1 task, 0.5 vCPU, 1GB RAM. vCPU: $0.04/hr, Mem: $0.004/hr | ~$18 USD |
+    | AWS ALB (Load Balancer)   | Application Load Balancer, tráfico bajo | ~$16-20 USD |
+    | AWS S3                    | Almacenamiento de evidencia, <1GB | <$1 USD |
+    | Twilio WhatsApp           | Mensajes de servicio (customer-initiated 24h) = GRATIS. Fee Twilio: $0.005/msg | ~$5-15 USD |
+    | LangSmith                 | Plan Developer: GRATIS (5,000 trazas/mes, suficiente para 100 casos) | $0 USD |
+    | Retool                    | Plan Free: hasta 5 usuarios internos, suficiente para equipo CX | $0 USD |
+    |---------------------------|--------------------------------|--------------------|
+    | TOTAL ESTIMADO (MVP)      |                                | ~$80-105 USD/mes   |
+    | TOTAL CON MARGEN (+50%)   | Buffer para picos o crecimiento | ~$120-160 USD/mes |
+
+  NOTAS IMPORTANTES (texto pequeño):
+    "• Precios on-demand verificados en AWS, Twilio y LangSmith (marzo 2026).
+     • NO incluyen horas de desarrollo ni consultoría.
+     • Costos de Bedrock son variables: dependen del número de tokens procesados.
+     • WhatsApp: los mensajes de servicio (respuestas dentro de 24h al cliente)
+       son gratuitos por política de Meta. Solo se cobra fee de Twilio ($0.005/msg).
+     • Si el piloto escala, los costos con reservas de 1 año bajan ~30-40%.
+     • Estimación para instancias mínimas viables. Se escala según demanda real."
+Diseño:
+  - Tabla limpia con header naranja.
+  - Fila de TOTAL con fondo naranja y texto blanco, bold.
+  - Fila de TOTAL CON MARGEN en naranja suave.
+  - Notas en gris (#4A4A68), texto 11pt.
+
+--- SLIDE 14: LO QUE NO INCLUYE EL MVP ---
+Tipo: Expectativas / Scope negativo
+Título: "Alcance del MVP — Lo que NO incluye (y por qué)"
+Contenido (lista con justificaciones):
+  ✗ Vector store dedicado (Pinecone, Qdrant)
+    → "Volumen de KB no lo justifica. pgvector es suficiente."
+  
+  ✗ Integración telefónica (voz)
+    → "Fuera de scope. Arquitectura diseñada para agregarlo después."
+  
+  ✗ Despliegue masivo
+    → "Limitado al universo piloto de ~500 clientes."
+  
+  ✗ Kafka / colas de mensajes
+    → "~100 casos/mes no justifica la complejidad."
+  
+  ✗ Datos sensibles en chat
+    → "PII/PCI no se procesan en la ventana de chat."
+Diseño:
+  - Lista con ✗ en rojo/gris y justificación en texto más pequeño debajo.
+  - Fondo blanco, limpio.
+  - Tono: "no es limitación, es decisión informada".
+
+--- SLIDE 15: CRONOGRAMA / HOJA DE TRABAJO ---
+Tipo: Cronograma (imagen)
+Título: "Plan de Trabajo — Cronograma MVP"
+Contenido:
+  *** PLACEHOLDER ***
+  Insertar la imagen: Artifacts/WorkSheet.png
+  
+  Esta imagen ya contiene el cronograma completo del MVP con las 4 semanas
+  y todas las actividades detalladas. Insertarla como imagen centrada
+  que ocupe la mayor parte del slide.
+  
+  Si no es posible insertar la imagen, replicar la estructura:
+    Semana 1: Fundamentos y Diseño
+    Semana 2: Construcción del Agente
+    Semana 3: Integración, Escalamiento y Pruebas
+    Semana 4: Go-Live Piloto Controlado
+  
+  Nota al pie: "Equipo asignado: 2 científicos de datos | Duración: 4 semanas"
+Diseño:
+  - Imagen centrada con padding generoso.
+  - Si se replica, usar barras horizontales naranja para cada semana.
+  - Puntos (●) como marcadores de Gantt.
+
+--- SLIDE 16: PRÓXIMOS PASOS ---
+Tipo: Cierre / Call to Action
+Título: "Próximos Pasos"
+Contenido:
+  PASO 1 → "Validación de intenciones y KB con el equipo de CX"
+  PASO 2 → "Kickoff técnico: configuración de Twilio + WhatsApp sandbox"
+  PASO 3 → "Semana 1: Fundamentos, diseño y setup de infraestructura"
+  PASO 4 → "Semana 4: Go-live piloto controlado (~50 usuarios)"
+  
+  Caja destacada:
+    "¿Preguntas?"
+    Contacto: [placeholder para nombre y email]
+Diseño:
+  - Steps en formato timeline vertical con línea naranja conectora.
+  - Cada paso con un círculo naranja numerado.
+  - Caja de preguntas centrada con fondo naranja.
+
+================================================================================
+INSTRUCCIONES TÉCNICAS PARA python-pptx
+================================================================================
+
+LIBRERÍA: python-pptx
+INSTALACIÓN: pip install python-pptx Pillow
+
+ESTRUCTURA DEL CÓDIGO:
+1. Crear presentación con aspect ratio 16:9
+2. NO usar los layouts predefinidos de python-pptx (son feos).
+   En su lugar, usar slides en blanco (layout 6 o blank) y construir
+   cada elemento manualmente con shapes.
+3. Para cada slide:
+   a. Agregar un shape de barra superior naranja (rectángulo sin bordes)
+   b. Agregar textboxes para título, subtítulo, body
+   c. Agregar shapes (rectángulos redondeados) para cajas/cards
+   d. Agregar tablas donde se indica
+4. Para la slide de cronograma: insertar WorkSheet.png como imagen
+
+HELPERS SUGERIDOS:
+- Función para crear barra naranja superior consistente
+- Función para crear footer "Círculo de Crédito | Confidencial"
+- Función para crear una card/caja con título + texto
+- Función para crear tabla con estilo consistente
+- Función para crear número destacado (para KPIs)
+- Constantes para colores (RGBColor)
+
+IMAGEN DE CRONOGRAMA:
+  from pptx.util import Inches
+  slide.shapes.add_picture("Artifacts/WorkSheet.png", left, top, width, height)
+
+OUTPUT: Guardar como "Artifacts/Presentacion_Circulo_ChatBot_24_7.pptx"
+
+================================================================================
+NOTAS ADICIONALES
+================================================================================
+
+- La presentación debe verse profesional y ejecutiva. El público son
+  directivos de Círculo de Crédito, no técnicos.
+- Evitar jerga excesivamente técnica en las slides. Las explicaciones
+  técnicas van en las notas del presentador (notes), no en el slide.
+- Los costos son ESTIMACIONES. Marcarlos claramente como tal.
+- La estimación de costos NO incluye horas de desarrollo/consultoría,
+  solo infraestructura.
+- El archivo WorkSheet.png DEBE insertarse tal cual como imagen en la
+  diapositiva de cronograma.
+
+IMÁGENES DE REFERENCIA PARA ESTILO:
+  - Artifacts/WorkSheet.png → Estilo de cronograma con paleta naranja
+  - Artifacts/referenceStyle1.png → Screenshot/diseño de referencia Anthropic
+  - Artifacts/[referenceStyle2.png] → Screenshot/diseño adicional Anthropic
+

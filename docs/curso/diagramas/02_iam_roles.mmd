@@ -1,0 +1,8 @@
+flowchart TB
+  subgraph Account[Cuenta 930067561911]
+    EB[EventBridge Scheduler service] -->|assume| SR[mlmonitor-scheduler-invoke<br/>permite ecs:RunTask + iam:PassRole]
+    SR -->|ecs:RunTask| ECS[ECS service]
+    ECS -->|assume| ER[mlmonitor-ecs-execution<br/>permite ECR pull + CloudWatch Logs]
+    Contenedor -->|assume internamente| TR[mlmonitor-task<br/>permite Bedrock, S3, SES, Secrets]
+    ECS -.->|lanza| Contenedor
+  end

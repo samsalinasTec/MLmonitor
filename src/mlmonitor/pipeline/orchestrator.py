@@ -8,13 +8,14 @@ Step 3b: S3Uploader.upload()               → sube PDF a S3 (si S3_BUCKET confi
 Step 4: SESEmailSender.send_report()       → envía correo via SES
 """
 
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 
+from sqlalchemy import func
 from sqlalchemy.engine import Engine
 
 from mlmonitor.analyst.base import AnalysisContext, AnalysisResult
-from mlmonitor.db.models import Base
+from mlmonitor.db.models import Base, FactDistributions
 from mlmonitor.db.session import get_session
 from mlmonitor.email.sender import SESEmailSender
 from mlmonitor.metrics.calculator import MetricsCalculator
@@ -54,8 +55,26 @@ class PipelineOrchestrator:
         Returns:
             dict con resultados de cada paso
         """
+        # Auto-detect calculation_date from latest FACT_DISTRIBUTIONS data
+        data_lag_weeks = None
         if calculation_date is None:
-            calculation_date = date.today()
+            with get_session(self.engine) as session:
+                latest = (
+                    session.query(func.max(FactDistributions.origination_week))
+                    .scalar()
+                )
+            if latest is None:
+                raise RuntimeError(
+                    "No distribution data found in DB. Run the incremental ETL first."
+                )
+            calculation_date = latest
+            print(f"[pipeline] Auto-detected calculation_date={calculation_date} from FACT_DISTRIBUTIONS")
+
+        # Detect data lag vs calendar
+        calendar_monday = date.today() - timedelta(days=date.today().weekday())
+        data_lag_weeks = (calendar_monday - calculation_date).days // 7
+        if data_lag_weeks > 0:
+            print(f"[pipeline] Data lag: {data_lag_weeks} weeks behind calendar week {calendar_monday}")
 
         results = {
             "model_id": model_id,
@@ -93,6 +112,10 @@ class PipelineOrchestrator:
                 calculation_week=calculation_date,
                 analyst=analyst,
             )
+
+        # Enrich context with data freshness info
+        context.latest_data_week = calculation_date
+        context.data_lag_weeks = data_lag_weeks
 
         llm_status = "ok (con LLM)" if llm_result else "ok (sin LLM)"
         results["steps"]["report_build"] = {

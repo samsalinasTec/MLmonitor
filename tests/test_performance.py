@@ -117,30 +117,29 @@ class TestGiniKSFromDB:
             f"s1 Gini esperado > 0, obtenido: {result['gini']}"
         )
 
-    def test_lag_fix_correct_execution_week(self, session, segment_ids):
+    def test_correct_origination_week_finds_data(self, session, segment_ids):
         """
-        Verifica el fix del bug execution_week:
-        - Con lag correcto (TARGET_LAG) → encuentra datos → Gini no es None
-        - Con lag=0 → execution_week = origination_week (sin datos ahí) → Gini es None
+        Con origination_week correcto (WEEK_0) se encuentran datos individuales.
+        Con origination_week futuro no hay datos → Gini es None.
         """
         reg_id = segment_ids["s1"]
 
-        # Con lag correcto: finds data at origination_week + TARGET_LAG
+        # origination_week donde hay datos (WEEK_0)
         result_correct = get_gini_ks_for_segment(
             session, reg_id, WEEK_0,
             metric_type=TARGET_NAME, lag_semanas=TARGET_LAG,
         )
         assert result_correct["gini"] is not None, (
-            "Con lag correcto debe encontrar datos de performance"
+            "Con origination_week correcto debe encontrar datos de performance"
         )
 
-        # Con lag=0: busca execution_week en origination_week (no hay datos ahí) → None
-        result_wrong_lag = get_gini_ks_for_segment(
-            session, reg_id, WEEK_0,
-            metric_type=TARGET_NAME, lag_semanas=0,
+        # origination_week sin datos → None
+        result_no_data = get_gini_ks_for_segment(
+            session, reg_id, date(2099, 6, 1),
+            metric_type=TARGET_NAME, lag_semanas=TARGET_LAG,
         )
-        assert result_wrong_lag["gini"] is None, (
-            "Con lag=0 no debe encontrar datos (execution_week == origination_week)"
+        assert result_no_data["gini"] is None, (
+            "Sin datos para esa semana, Gini debe ser None"
         )
 
     def test_future_week_returns_none(self, session, segment_ids):

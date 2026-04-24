@@ -18,7 +18,9 @@
             <tr><td>Modelo</td><td>{{ context.model_id }}</td></tr>
             <tr><td>Segmento</td><td>{{ seg.segment_id }} — {{ seg.segment_description }}</td></tr>
             <tr><td>Semana de cálculo</td><td>{{ context.calculation_week }}</td></tr>
-            <tr><td>Semana de performance (lag {{ context.lag_semanas }}s)</td><td>{{ context.performance_week }}</td></tr>
+            {% for cov in context.performance_coverage %}
+            <tr><td>Performance — {{ cov.target }} (lag {{ cov.lag }}s)</td><td>hasta {{ cov.cutoff_date }}</td></tr>
+            {% endfor %}
             <tr><td>Estado</td><td><span class="badge badge-{{ seg.overall_status | lower }}">{{ seg.overall_status }}</span></td></tr>
         </tbody>
     </table>
@@ -80,7 +82,7 @@
                         {{ 'OK' if gini_val >= 0.35 else 'WARNING' if gini_val >= 0.25 else 'CRITICAL' }}
                     </span>
                 </td>
-                <td>Performance sem {{ context.performance_week }}</td>
+                <td>Cohorte {{ context.performance_weeks.get(bmalo, context.performance_week) }}</td>
             </tr>
             {% endif %}
             {% endfor %}
@@ -96,7 +98,7 @@
                         {{ 'OK' if ks_val >= 0.20 else 'WARNING' if ks_val >= 0.15 else 'CRITICAL' }}
                     </span>
                 </td>
-                <td>Performance sem {{ context.performance_week }}</td>
+                <td>Cohorte {{ context.performance_weeks.get(bmalo, context.performance_week) }}</td>
             </tr>
             {% endif %}
             {% endfor %}

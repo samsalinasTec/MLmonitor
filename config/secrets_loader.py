@@ -3,7 +3,11 @@ secrets_loader.py — Carga credenciales desde AWS Secrets Manager.
 
 Secretos esperados:
   ml-monitoring/rds    → {username, password, host, port, dbname}
-  ml-monitoring/config → {sender_email, recipient_email}
+  ml-monitoring/SES    → {sender_email, recipient_email}
+
+boto3 is imported lazily inside _fetch_secret(). If boto3 is not installed
+(ETL-only environment), load_all_secrets() raises ImportError, which is
+caught by _build_settings() in settings.py — falls back to .env defaults.
 """
 
 import json

@@ -1,5 +1,8 @@
 """
-Cálculo de PSI (Population Stability Index) desde FACT_DISTRIBUTIONS.
+Cálculo de PSI (Population Stability Index).
+
+Referencia: META_BASELINE_DISTRIBUTIONS (baseline de entrenamiento).
+Actual:     FACT_DISTRIBUTIONS (semana de produccion).
 
 PSI = Σ (P_actual - P_ref) × ln(P_actual / P_ref)
 
@@ -15,7 +18,7 @@ from datetime import date
 import pandas as pd
 from sqlalchemy.orm import Session
 
-from mlmonitor.db.models import FactDistributions
+from mlmonitor.db.models import FactDistributions, MetaBaselineDistributions
 
 EPS = 1e-8  # evitar log(0)
 
@@ -47,27 +50,23 @@ def get_psi_for_variable(
     current_week: date,
 ) -> float:
     """
-    Calcula PSI comparando la distribución actual con la referencia de entrenamiento.
+    Calcula PSI comparando la distribución actual con el baseline de entrenamiento.
     """
-    # Cargar referencia (reference_flag=1)
     ref_rows = (
-        session.query(FactDistributions)
+        session.query(MetaBaselineDistributions)
         .filter(
-            FactDistributions.model_registry_id == model_registry_id,
-            FactDistributions.variable_id == variable_id,
-            FactDistributions.reference_flag == 1,
+            MetaBaselineDistributions.model_registry_id == model_registry_id,
+            MetaBaselineDistributions.variable_id == variable_id,
         )
         .all()
     )
 
-    # Cargar distribución actual
     cur_rows = (
         session.query(FactDistributions)
         .filter(
             FactDistributions.model_registry_id == model_registry_id,
             FactDistributions.variable_id == variable_id,
-            FactDistributions.reference_week == current_week,
-            FactDistributions.reference_flag == 0,
+            FactDistributions.origination_week == current_week,
         )
         .all()
     )
@@ -141,8 +140,7 @@ def get_null_rates(
         session.query(FactDistributions)
         .filter(
             FactDistributions.model_registry_id == model_registry_id,
-            FactDistributions.reference_week == current_week,
-            FactDistributions.reference_flag == 0,
+            FactDistributions.origination_week == current_week,
         )
         .all()
     )

@@ -1,0 +1,6 @@
+flowchart LR
+  A[editar src/] --> B[pytest]
+  B -->|pasa| C[docker buildx build+push<br/>tag v0.1.N + latest]
+  C --> D[register-task-definition<br/>revisión nueva]
+  D --> E[run-task smoke]
+  E -->|exit 0| F[Scheduler recoge<br/>la nueva revisión<br/>automáticamente]

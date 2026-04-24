@@ -62,7 +62,7 @@ def main():
     if args.date:
         calculation_date = date.fromisoformat(args.date)
     else:
-        calculation_date = date.today()
+        calculation_date = None  # orchestrator auto-detecta desde DB
 
     # Configuración
     from config.settings import settings
@@ -70,7 +70,7 @@ def main():
     output_dir = settings.reports_dir
 
     print(f"[run_pipeline] DB: {db_url}")
-    print(f"[run_pipeline] Fecha: {calculation_date}")
+    print(f"[run_pipeline] Fecha: {calculation_date or 'auto-detect desde DB'}")
     print(f"[run_pipeline] LLM: {'desactivado' if args.no_llm else 'Bedrock'}")
 
     # Crear engine

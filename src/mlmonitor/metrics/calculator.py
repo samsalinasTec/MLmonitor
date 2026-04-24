@@ -138,6 +138,7 @@ class MetricsCalculator:
                 variable_map=variable_map,
                 target_vars=target_vars,
                 current_week=current_week,
+                score_max=seg.score_max or 1000,
             )
             all_rows.extend(rows)
 
@@ -170,6 +171,7 @@ class MetricsCalculator:
         variable_map: dict[int, str],
         target_vars: list[MetaVariables],
         current_week: date,
+        score_max: int = 1000,
     ) -> list[FactMetricsHistory]:
         rows = []
 
@@ -241,6 +243,7 @@ class MetricsCalculator:
                 self.session, model_registry_id, origination_week,
                 metric_type=tname,
                 lag_semanas=lag,
+                score_max=score_max,
             )
 
             if perf_metrics.get("gini") is not None:
@@ -256,7 +259,7 @@ class MetricsCalculator:
                         metric_value=perf_metrics["gini"],
                         alert_label=label,
                         details={"origination_week": origination_week.isoformat(), "target": tname},
-                        calculated_from="FACT_PERFORMANCE_BINNED",
+                        calculated_from="FACT_PERFORMANCE_INDIVIDUAL",
                     ))
 
             if perf_metrics.get("ks") is not None:
@@ -272,7 +275,7 @@ class MetricsCalculator:
                         metric_value=perf_metrics["ks"],
                         alert_label=label,
                         details={"origination_week": origination_week.isoformat(), "target": tname},
-                        calculated_from="FACT_PERFORMANCE_BINNED",
+                        calculated_from="FACT_PERFORMANCE_INDIVIDUAL",
                     ))
 
             violations = get_ordering_violations_for_metric(

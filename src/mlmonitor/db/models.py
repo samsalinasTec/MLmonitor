@@ -1,5 +1,5 @@
 """
-SQLAlchemy ORM — 6 tablas del modelo de datos MLMonitor.
+SQLAlchemy ORM — 7 tablas del modelo de datos MLMonitor.
 
 Reglas:
 - META tables: SCD2 con valid_from/valid_to. Nunca se sobreescriben.
@@ -16,7 +16,6 @@ from sqlalchemy import (
     DateTime,
     Float,
     Integer,
-    SmallInteger,
     String,
     Text,
     UniqueConstraint,
@@ -128,18 +127,53 @@ class MetaMetricThresholds(Base):
     valid_to = Column(Date, nullable=True)
 
 
+class MetaBaselineDistributions(Base):
+    """Distribuciones de referencia del baseline de entrenamiento.
+
+    Separada de FACT_DISTRIBUTIONS porque el baseline no es una semana de
+    produccion: es un artefacto de entrenamiento con formato y ciclo de vida
+    distintos.  Se pobla una sola vez desde bootstrap.py.
+
+    bin_percentage es derivado (bin_count / total_records) y se guarda
+    redundante para evitar el computo en cada query de PSI.  Ambos campos
+    se calculan juntos al insertar y nunca se actualizan por separado.
+    """
+
+    __tablename__ = "META_BASELINE_DISTRIBUTIONS"
+    __table_args__ = (
+        UniqueConstraint(
+            "model_registry_id", "variable_id", "bin_label",
+            name="uq_meta_baseline_distributions",
+        ),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    model_registry_id = Column(Integer, ForeignKey("META_MODEL_REGISTRY.id"), nullable=False, index=True)
+    variable_id = Column(Integer, ForeignKey("META_VARIABLES.id"), nullable=False, index=True)
+    bin_label = Column(String(100), nullable=False)
+    bin_count = Column(Integer, default=0)
+    bin_percentage = Column(Float)
+    null_count = Column(Integer, default=0)
+    total_records = Column(Integer)
+    loaded_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+
 # ---------------------------------------------------------------------------
 # FACT tables
 # ---------------------------------------------------------------------------
 
 
 class FactDistributions(Base):
-    """Distribuciones de variables por segmento y semana. Solo append."""
+    """Distribuciones semanales de produccion por segmento y semana. Solo append.
+
+    Solo contiene datos de produccion (semanas incrementales).
+    La referencia de entrenamiento vive en META_BASELINE_DISTRIBUTIONS.
+    """
 
     __tablename__ = "FACT_DISTRIBUTIONS"
     __table_args__ = (
         UniqueConstraint(
-            "model_registry_id", "variable_id", "reference_week", "bin_label",
+            "model_registry_id", "variable_id", "origination_week", "bin_label",
             name="uq_fact_distributions"
         ),
     )
@@ -147,8 +181,7 @@ class FactDistributions(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     model_registry_id = Column(Integer, ForeignKey("META_MODEL_REGISTRY.id"), nullable=False, index=True)
     variable_id = Column(Integer, ForeignKey("META_VARIABLES.id"), nullable=False, index=True)
-    reference_week = Column(Date, nullable=False, index=True)
-    reference_flag = Column(SmallInteger, default=0)  # 1 = baseline de entrenamiento
+    origination_week = Column(Date, nullable=False, index=True)
     bin_label = Column(String(100), nullable=False)
     bin_count = Column(Integer, default=0)
     bin_percentage = Column(Float)
@@ -184,7 +217,13 @@ class FactPerformanceBinned(Base):
 
 
 class FactPerformanceIndividual(Base):
-    """Outcomes a nivel de crédito individual. Solo append. Madurez: semanas_vida == lag."""
+    """Outcomes a nivel de crédito individual. Solo append.
+
+    origination_week = semana de surtimiento (disbursement week).
+    execution_week   = semana de observación (cuando se evaluó el outcome).
+    La madurez se garantiza por el filtro del ETL incremental:
+    semana_num = W - lag, por lo que no se necesita campo semanas_vida.
+    """
 
     __tablename__ = "FACT_PERFORMANCE_INDIVIDUAL"
     __table_args__ = (
@@ -197,12 +236,11 @@ class FactPerformanceIndividual(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     credito_id = Column(String(50), nullable=False, index=True)
     model_registry_id = Column(Integer, ForeignKey("META_MODEL_REGISTRY.id"), nullable=False, index=True)
-    origination_week = Column(Integer, nullable=False, index=True)  # ISO: 202541
-    execution_week = Column(Integer, nullable=False)                 # ISO: 202549
-    fnpuntaje = Column(Float)                                        # score continuo real
-    semanas_vida = Column(Integer, nullable=False)                   # execution_week - origination_week en semanas
-    ventana = Column(String(50), nullable=False)                     # nombre de la variable target
-    flag = Column(Integer, nullable=False)                           # 0 o 1, nunca null
+    origination_week = Column(Date, nullable=False, index=True)      # semana de surtimiento
+    execution_week = Column(Date, nullable=False)                     # semana de observación
+    fnpuntaje = Column(Float)                                         # score continuo real
+    ventana = Column(String(50), nullable=False)                      # nombre de la variable target
+    flag = Column(Integer, nullable=False)                            # 0 o 1, nunca null
     loaded_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
 

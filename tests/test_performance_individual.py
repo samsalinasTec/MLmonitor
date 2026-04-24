@@ -3,7 +3,7 @@ Tests para FACT_PERFORMANCE_INDIVIDUAL.
 
 Verifica que:
 - Los registros se insertan correctamente
-- semanas_vida == lag del target (regla de madurez)
+- origination_week y execution_week son Date (no Integer)
 - flag es siempre 0 o 1, nunca null
 - No hay duplicados (credito_id, model_registry_id, ventana)
 - execution_week - origination_week corresponde al lag en semanas
@@ -15,10 +15,11 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+from datetime import date
+
 import pytest
 from mlmonitor.db.models import FactPerformanceIndividual
-from mlmonitor.data.raw_etl import _semana_to_date
-from conftest import TARGET_NAME, TARGET_LAG
+from conftest import TARGET_NAME, TARGET_LAG, WEEK_0
 
 
 class TestFactPerformanceIndividual:
@@ -32,20 +33,17 @@ class TestFactPerformanceIndividual:
         )
         assert count > 0
 
-    def test_semanas_vida_equals_lag(self, session, segment_ids):
-        """semanas_vida debe ser igual al lag del target."""
+    def test_origination_week_is_date(self, session, segment_ids):
+        """origination_week debe ser Date, no Integer."""
         reg_ids = list(segment_ids.values())
-        rows = (
+        row = (
             session.query(FactPerformanceIndividual)
-            .filter(
-                FactPerformanceIndividual.model_registry_id.in_(reg_ids),
-                FactPerformanceIndividual.ventana == TARGET_NAME,
-            )
-            .all()
+            .filter(FactPerformanceIndividual.model_registry_id.in_(reg_ids))
+            .first()
         )
-        assert len(rows) > 0, "Debe haber registros para el target de prueba"
-        assert all(r.semanas_vida == TARGET_LAG for r in rows), (
-            "semanas_vida debe coincidir con el lag del target"
+        assert row is not None
+        assert isinstance(row.origination_week, date), (
+            f"origination_week debe ser date, es {type(row.origination_week)}"
         )
 
     def test_flag_is_zero_or_one(self, session, segment_ids):
@@ -77,10 +75,10 @@ class TestFactPerformanceIndividual:
             .distinct()
             .count()
         )
-        assert total == unique, f"Hay duplicados en FACT_PERFORMANCE_INDIVIDUAL: {total} filas, {unique} únicas"
+        assert total == unique, f"Hay duplicados: {total} filas, {unique} unicas"
 
     def test_execution_week_is_origination_plus_lag(self, session, segment_ids):
-        """execution_week - origination_week debe corresponder al lag (en semanas ISO)."""
+        """execution_week - origination_week debe corresponder al lag (en semanas)."""
         reg_ids = list(segment_ids.values())
         rows = (
             session.query(FactPerformanceIndividual)
@@ -91,9 +89,7 @@ class TestFactPerformanceIndividual:
             .all()
         )
         for r in rows:
-            orig_date = _semana_to_date(r.origination_week)
-            exec_date = _semana_to_date(r.execution_week)
-            delta_weeks = (exec_date - orig_date).days // 7
+            delta_weeks = (r.execution_week - r.origination_week).days // 7
             assert delta_weeks == TARGET_LAG, (
                 f"execution_week - origination_week = {delta_weeks} semanas, "
                 f"esperado: {TARGET_LAG}"

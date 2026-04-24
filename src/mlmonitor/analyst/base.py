@@ -38,7 +38,10 @@ class AnalysisContext:
     segments: list[SegmentMetrics]
     fleet_summary: dict[str, Any] = field(default_factory=dict)
     total_submodels: int = 11  # total de sub-scorecards del modelo (para portada)
-    # fleet_summary: {"total": 9, "ok": N, "warning": N, "critical": N}
+    performance_coverage: list[dict] = field(default_factory=list)   # [{target, lag, cutoff_date}]
+    performance_weeks: dict[str, date] = field(default_factory=dict)  # {target_name: cutoff_date}
+    latest_data_week: date | None = None  # ultima semana con datos en FACT_DISTRIBUTIONS
+    data_lag_weeks: int | None = None     # semanas de desfase vs calendario actual
 
 
 @dataclass

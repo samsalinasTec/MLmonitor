@@ -257,3 +257,27 @@ La implementación de esta decisión está en §8.2.18.
 - RDS `PubliclyAccessible=true` en VPC default con subnets públicas. Mover a subnets privadas + NAT en fase de hardening.
 
 **Verificación:** smoke test `aws ecs run-task` el 2026-04-23: exit 0, PDF publicado en `s3://ml-monitoring-reports-credito/mlmonitor/reports/mlmonitor_2026-01-05.pdf`, correo entregado a `samsalriu@gmail.com` desde `1206029@onuriscp.com`, duración ~3:25.
+
+
+## §8.2.21 Contrato de env vars en `entrypoint.sh` + script de backfill local
+
+**Fecha:** 2026-04-27 · **Estado:** Aceptado · **Supersede:** —
+
+**Contexto.** El MVP en ECS Fargate (§8.2.20) auto-detecta la semana de ejecución desde los CSVs sincronizados de S3. Para operación recurrente surgen tres necesidades que no resolvía el `entrypoint.sh` original: (a) re-correr una semana específica (RUN_DATE), (b) regenerar solo PDF si los datos ya están en RDS (SKIP_ETL), (c) suprimir correo o LLM en pruebas (NO_EMAIL, NO_LLM). Adicionalmente, el backfill histórico de `FACT_METRICS_HISTORY` requiere correr ETL+pipeline de muchas semanas — una operación one-shot que no encaja en Fargate y conviene ejecutar desde laptop.
+
+**Decisión.**
+1. `docker/entrypoint.sh` lee 4 env vars opcionales: `RUN_DATE` (forza `--date` en ambos scripts), `SKIP_ETL=1`, `NO_EMAIL=1`, `NO_LLM=1`. Sin override, comportamiento idéntico a §8.2.20.
+2. Disparo ad-hoc desde CLI: `aws ecs run-task ... --overrides ` con `containerOverrides[0].environment`.
+3. Backfill histórico: `scripts/backfill.py` itera lunes ISO entre `--start` y `--end` y llama `run_incremental_etl.py` + `run_pipeline.py --no-email --no-llm` por subprocess. Inyecta `S3_BUCKET=""` en el environment para deshabilitar la subida del PDF (contrato de `config/settings.py`, ver CLAUDE.md §2). Los PDFs quedan en `artifacts/reports/` local; bórralos al terminar.
+4. `SKIP_PIPELINE` **no** se implementa: no hay caso de uso real (ETL sin pipeline no produce métricas).
+
+**Razones.**
+- Override por env var (no por flag CLI) es el patrón natural en ECS — `--overrides` ya inyecta env, no requiere parsear args.
+- Backfill como script Python (no bash loop): manejo de errores por semana, idempotente vía `UniqueConstraint` en FACT_*, simétrico con `run_pipeline.py`.
+- Backfill desde laptop (no desde Fargate): es one-shot, no se quiere pagar warm-up de Fargate por iteración, y el `S3_BUCKET=""` evita ensuciar el bucket con N PDFs históricos que nadie va a leer.
+
+**Alternativas descartadas.**
+- Pasar `--date` como argumento posicional al contenedor: requeriría `command` override en run-task, menos compatible con el Scheduler que no inyecta args.
+- Backfill desde ECS con N invocaciones del schedule: caro y más lento; sin necesidad operativa.
+
+**Verificación.** Smoke test 2026-04-27 con task def `mlmonitor:2` y overrides `RUN_DATE=2026-01-05 SKIP_ETL=1 NO_EMAIL=1 NO_LLM=1`: exit 0, logs muestran las 4 env vars aplicadas, pipeline corrió en 14s (sin ETL, sin LLM, sin SES), PDF generado y subido a S3 (sin `S3_BUCKET` override en este caso).

@@ -73,8 +73,8 @@
     </thead>
     <tbody>
         {% for seg in context.segments %}
-        {% set fpd_gini = seg.gini.get('first_payment_default2') %}
-        {% set fpd_ks = seg.ks.get('first_payment_default2') %}
+        {% set fpd_gini = seg.gini.get('b_malo8_13') %}
+        {% set fpd_ks = seg.ks.get('b_malo8_13') %}
         <tr>
             <td><strong>{{ seg.segment_id }}</strong></td>
             <td>{{ seg.segment_description }}</td>
@@ -133,8 +133,8 @@
         </thead>
         <tbody>
             {% for seg in context.segments %}
-            {% set fpd_gini = seg.gini.get('first_payment_default2') %}
-            {% set fpd_ks = seg.ks.get('first_payment_default2') %}
+            {% set fpd_gini = seg.gini.get('b_malo8_13') %}
+            {% set fpd_ks = seg.ks.get('b_malo8_13') %}
             {% set total_viol = seg.ordering_violations.values() | sum %}
             <tr>
                 <td class="rank-num">{{ loop.index }}</td>

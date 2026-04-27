@@ -6,6 +6,15 @@ Formato: encabezado por fecha ISO (`## YYYY-MM-DD`) + bullets cortos. Entradas m
 
 ---
 
+## 2026-04-27
+
+- **ADR §8.2.21 implementada.** `docker/entrypoint.sh` ahora lee `RUN_DATE`, `SKIP_ETL`, `NO_EMAIL`, `NO_LLM` (env vars opcionales). Sin overrides, comportamiento idéntico al schedule semanal.
+- Imagen `v0.1.1` + `latest` pusheada a ECR (`930067561911.dkr.ecr.us-east-1.amazonaws.com/mlmonitor`). Task def `mlmonitor:2` registrada apuntando a `:latest`.
+- Smoke test ECS con `--overrides` (RUN_DATE=2026-01-05, SKIP_ETL=1, NO_EMAIL=1, NO_LLM=1): exit 0, 4 env vars aplicadas correctamente, pipeline corrió en ~14s sin tocar SES/Bedrock.
+- Creado `scripts/backfill.py` (orquestador por subprocess, one-shot desde laptop). Inyecta `S3_BUCKET=""` para que los PDFs históricos no contaminen S3. Siempre pasa `--no-email --no-llm`.
+- Módulo 12 del curso actualizado: removida la marca "no implementado aún", reemplazada por flujo real con env vars; sección de backfill apunta a `scripts/backfill.py`.
+- CLAUDE.md §4 ganó una nota explicando la división ETL/pipeline (motiva por qué backfill debe correr ambos).
+
 ## 2026-04-23 (tarde — curso de AWS deployment)
 
 - Creada carpeta `docs/curso/` con material didáctico (15 módulos + README + scripts verificadores + diagramas Mermaid + sandbox/teardown).

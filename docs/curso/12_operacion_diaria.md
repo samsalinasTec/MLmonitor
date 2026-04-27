@@ -26,20 +26,11 @@ poetry run python scripts/run_pipeline.py --date 2025-12-22 --no-email
 
 `--no-email` evita re-enviar correo. El PDF se genera en `artifacts/reports/` y se sube a S3.
 
-### Opción B — `run-task` con override (requiere cambio de 3 líneas)
+### Opción B — `run-task` con override (implementado)
 
-**Propuesta de mejora al entrypoint** (no implementada aún, se propone como ADR §8.2.21):
+Desde 2026-04-27 (ADR §8.2.21, task def `mlmonitor:2`), `entrypoint.sh` lee 4 env vars opcionales: `RUN_DATE`, `SKIP_ETL`, `NO_EMAIL`, `NO_LLM`. Sin ellas, el comportamiento es idéntico al schedule semanal.
 
-```bash
-# En docker/entrypoint.sh, antes del run_pipeline:
-DATE_ARG=""
-if [ -n "${RUN_DATE:-}" ]; then
-  DATE_ARG="--date $RUN_DATE"
-fi
-poetry run python scripts/run_pipeline.py $DATE_ARG
-```
-
-Con eso, para re-ejecutar semana X en ECS:
+Para re-ejecutar semana X en ECS:
 
 ```bash
 aws ecs run-task \
@@ -48,12 +39,19 @@ aws ecs run-task \
   --overrides '{
     "containerOverrides": [{
       "name": "mlmonitor",
-      "environment": [{"name": "RUN_DATE", "value": "2025-12-22"}]
+      "environment": [
+        {"name": "RUN_DATE", "value": "2025-12-22"},
+        {"name": "SKIP_ETL", "value": "1"},
+        {"name": "NO_EMAIL", "value": "1"},
+        {"name": "NO_LLM",   "value": "1"}
+      ]
     }]
   }' --count 1
 ```
 
-**Recomendación:** si es ocasional, Opción A. Si vas a re-correr frecuentemente, implementa Opción B.
+`SKIP_ETL=1` regenera solo el PDF si los datos ya están en RDS. `NO_EMAIL=1` y `NO_LLM=1` son útiles para validar imagen sin disparar SES/Bedrock.
+
+**Recomendación:** Opción A para regenerar un PDF puntual desde laptop; Opción B cuando quieres validar la imagen Docker recién pusheada o re-correr en el mismo entorno que el schedule.
 
 ## 2. Backfill histórico de `FACT_METRICS_HISTORY`
 
@@ -63,34 +61,20 @@ aws ecs run-task \
 
 ### Script de backfill
 
-Crear en `scripts/backfill_metrics.py`:
-
-```python
-"""Itera semanas conocidas y re-ejecuta el pipeline contra RDS."""
-from datetime import date, timedelta
-from mlmonitor.pipeline.runner import run_pipeline
-
-# Ajusta el rango a tu caso
-start = date(2025, 9, 1)   # lunes
-end   = date(2026, 1, 5)
-
-current = start
-while current <= end:
-    try:
-        run_pipeline(calculation_date=current, send_email=False, upload_s3=False, use_llm=False)
-        print(f"OK {current}")
-    except Exception as e:
-        print(f"SKIP {current}: {e}")
-    current += timedelta(weeks=1)
-```
-
-Correr:
+Implementado en `scripts/backfill.py` (orquestador por subprocess; itera lunes ISO y llama `run_incremental_etl.py` + `run_pipeline.py --no-email --no-llm`). Inyecta `S3_BUCKET=""` en el environment para que los PDFs históricos no se suban a S3.
 
 ```bash
-poetry run python scripts/backfill_metrics.py
+# Backfill completo (ETL + pipeline)
+poetry run python scripts/backfill.py --start 2025-09-01 --end 2026-01-05
+
+# Solo pipeline (datos ya en RDS, p.ej. cambió fórmula de PSI)
+poetry run python scripts/backfill.py --start 2025-09-01 --end 2026-01-05 --skip-etl
+
+# Una sola semana
+poetry run python scripts/backfill.py --start 2025-10-13 --end 2025-10-13
 ```
 
-**Precaución:** el ETL ya debe haber cargado `FACT_DISTRIBUTIONS` y `FACT_PERFORMANCE_*` para cada semana. Si no, corre primero `run_incremental_etl.py` por cada semana con `--date`.
+Los PDFs se generan en `artifacts/reports/` local — bórralos al terminar (`rm -rf artifacts/reports/`).
 
 **Idempotencia:** el pipeline usa `UniqueConstraint` sobre la clave de negocio → re-corridas no duplican filas.
 

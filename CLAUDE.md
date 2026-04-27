@@ -51,6 +51,7 @@ MLMonitor es un sistema de monitoreo automatizado **semanal** para el scorecard 
   - **Flow A:** `variables_serc_*.csv` → `FACT_DISTRIBUTIONS` (base de PSI).
   - **Flow B:** `muestra_weekly_*.csv` → `FACT_PERFORMANCE_BINNED` + `FACT_PERFORMANCE_INDIVIDUAL` (base de Gini/KS).
   - No acoplarlos; pueden fallar/correrse independientemente.
+- **División ETL vs pipeline (importante para backfill).** El **ETL** trae datos crudos desde CSVs y los deposita en `FACT_DISTRIBUTIONS` y `FACT_PERFORMANCE_*`. El **pipeline** (`run_pipeline.py`) consume esas tablas y deriva métricas (PSI, Gini, KS) que se persisten en `FACT_METRICS_HISTORY`, además de generar PDF + LLM + correo. Razón del split: si cambia una fórmula de métrica, se re-corre solo el pipeline sobre datos crudos existentes — no hace falta re-ingestar. Implicación práctica: un backfill histórico debe correr **ambos** (ETL + pipeline con `--no-email --no-llm`), no solo el ETL. Ver `scripts/backfill.py` y ADR §8.2.21.
 - **Madurez:** garantizada por el filtro `origination_week = execution_week - lag` en el ETL. No calcular edades en el código de métricas.
 - **Inversión de score:** `inverted = score_max - score` para que score bajo = alto riesgo. `score_max` vive en `MetaModelRegistry` (parametrizable por modelo, no hardcodear).
 - **Nulos:** `MISSING_SENTINEL = -100` para variables de scorecard (distinto de `NaN`).

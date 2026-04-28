@@ -207,7 +207,7 @@ class FactPerformanceBinned(Base):
     model_registry_id = Column(Integer, ForeignKey("META_MODEL_REGISTRY.id"), nullable=False, index=True)
     origination_week = Column(Date, nullable=False, index=True)  # semana de origen del score
     execution_week = Column(Date, nullable=False, index=True)  # semana ISO en que corrió el ETL
-    metric_type = Column(String(50), nullable=False)  # b_malo2_4, b_malo4_6, b_malo8_13, b_malo8_16, first_payment_default2, etc.
+    metric_type = Column(String(50), nullable=False)  # b_malo2_4, b_malo4_6, b_malo8_13, b_malo8_16, b_malo14_26, b_malo14_52
     score_bin = Column(String(20), nullable=False)  # "0-100", "100-200", ...
     score_midpoint = Column(Integer)
     count_total = Column(Integer, default=0)

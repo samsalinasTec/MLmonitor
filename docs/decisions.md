@@ -281,3 +281,66 @@ La implementación de esta decisión está en §8.2.18.
 - Backfill desde ECS con N invocaciones del schedule: caro y más lento; sin necesidad operativa.
 
 **Verificación.** Smoke test 2026-04-27 con task def `mlmonitor:2` y overrides `RUN_DATE=2026-01-05 SKIP_ETL=1 NO_EMAIL=1 NO_LLM=1`: exit 0, logs muestran las 4 env vars aplicadas, pipeline corrió en 14s (sin ETL, sin LLM, sin SES), PDF generado y subido a S3 (sin `S3_BUCKET` override en este caso).
+
+
+## §8.2.22 Reemplazo del set de targets monitoreados
+
+**Fecha:** 2026-04-27 · **Estado:** Aceptado · **Supersede:** —
+
+**Contexto.** El bootstrap inicial declaraba `first_payment_default2` como target monitoreado (lag 2 semanas). Crédito confirma que ese target fue agregado por desconocimiento del equipo de monitoreo, no porque sea de interés operativo: ningún reporte ni alerta se basa en él. Por otro lado, los CSVs de origen (`muestra_weekly`, `base_train_test_bb`) tienen las columnas `b_malo14_26` y `b_malo14_52`, que sí son de interés pero no estaban en `META_VARIABLES`/`META_METRIC_THRESHOLDS` porque al inicio del proyecto los datos dummy no cubrían los lags 26/52.
+
+**Decisión.**
+1. Eliminar `first_payment_default2` por completo de la DB (META + FACT) sin SCD2-cerrar. No se preserva histórico: no hay valor analítico en él porque nunca fue una decisión operativa, sólo configuración mal copiada.
+2. Agregar `b_malo14_26` (lag 26) y `b_malo14_52` (lag 52) como targets nuevos en `META_VARIABLES` (uno por segmento) y sus 6 thresholds globales (`gini_*`, `ks_*`, `ordering_violations_*`) en `META_METRIC_THRESHOLDS`.
+3. Ajustes paralelos en código: `bootstrap.TARGET_VARIABLES`, default de `metric_type` en `metrics/performance.py`, columna FPD removida del HTML del reporte y del prompt del LLM (`analyst/prompts.py`), comentarios en `db/models.py` y `metrics/business_metrics.py`, `notebooks/README.md` (sección sobre cobertura de FPD eliminada).
+4. Migración a RDS aplicada con `scripts/migrate_targets_2026_04_27.py` (idempotente, dry-run por defecto) — borra 11 META_VARIABLES, 3 META_METRIC_THRESHOLDS, 44 FACT_METRICS_HISTORY, 41 FACT_PERFORMANCE_BINNED, 25,952 FACT_PERFORMANCE_INDIVIDUAL referidas a `first_payment_default2`; inserta 22 META_VARIABLES (11 × 2 nuevos targets) y 6 thresholds.
+
+**Razones.**
+- Eliminar (vs SCD2-cerrar) refleja la intención: no es un retiro operativo de un target válido, es la corrección de una entrada que nunca debió existir. SCD2 está pensado para evolución legítima, no para borrar errores de configuración.
+- `b_malo14_26` y `b_malo14_52`: pre-cargar en DB para que cuando los CSVs cubran historia suficiente (producción) el ETL los empiece a poblar automáticamente, sin requerir un cambio de schema en el momento. En desarrollo el ETL los detecta y reporta `no records` — no se rompe nada.
+- Convención de `lag_semanas` para `b_malo<a>_<b>`: extremo superior (`b`) en todos los casos. **Corrigendum 2026-04-28**: `b_malo8_13` se cargó por error con `lag=8` (extremo inferior) en el bootstrap inicial. Crédito confirma que es un error: el lag siempre debe ser el extremo superior porque corresponde al tiempo necesario para observar el outcome completo de la ventana. Corregido a `lag_semanas=13` en `bootstrap.py` y aplicado a RDS con `scripts/migrate_lag_b_malo8_13_2026_04_28.py` (UPDATE en META_VARIABLES + DELETE de FACT_PERFORMANCE_BINNED/INDIVIDUAL de `b_malo8_13` para regenerar con la cohorte correcta).
+
+**Alternativas descartadas.**
+- SCD2-cerrar `first_payment_default2`: deja registros vivos pero con `valid_to` poblado y mantiene FACT histórico, contradice el espíritu de la corrección.
+- Esperar a que llegue producción con lags 26/52 antes de dar de alta: requeriría una migración futura cuando los datos ya estén ingresados, con riesgo de inconsistencia entre semanas con/sin esos targets.
+
+**Verificación.**
+- Bootstrap fresh sobre SQLite local: 11 segmentos, 172 META_VARIABLES, 20 META_METRIC_THRESHOLDS (vs 17 antes), 755 META_BASELINE_DISTRIBUTIONS.
+- ETL `--date 2026-01-05`: 24,404 individual rows; logs muestran "no records" para `b_malo14_26` y `b_malo14_52` (esperado en dummy).
+- Pipeline `--no-email --no-llm`: 231 métricas, PDF generado.
+- 58/58 tests pasan.
+- RDS: dry-run post-migración reporta 0 filas a borrar/insertar (idempotente).
+
+
+## §8.2.23 Thresholds per-segmento desde CSV de crédito
+
+**Fecha:** 2026-04-27 · **Estado:** Aceptado · **Supersede:** —
+
+**Contexto.** `META_METRIC_THRESHOLDS` se inicializaba con 20 thresholds **globales** (`model_registry_id IS NULL`) hardcodeados en `bootstrap.py`. Eran el mismo número para los 11 segmentos, sin calibración. Crédito entregó `data/inputs/raw_tables/tresholds_monitoreo.csv` con 356 filas que sí están calibradas por segmento (`bb_1..bb_11`) para `psi`, `null_rate`, gini/ks/ordering_violations de los 6 targets, y gini de variables de scorecard. El CSV tiene errores humanos: campo `direction` inconsistente, variables intermedias (`EXTRA_SERC`) mezcladas con las del scorecard, métrica `gini_INTERCEPTO` que no aplica, omisiones de targets en algunos segmentos.
+
+**Decisión.**
+1. Reemplazar los 20 thresholds globales por **315 per-segmento** (11 × ~28 métricas/segmento) derivados del CSV. `model_registry_id` siempre poblado; ya no hay fila global para psi/null_rate/targets/scorecard-vars.
+2. Nuevo módulo `data/threshold_loader.py` encapsula las reglas de derivación y se reusa desde `bootstrap.py` (DBs nuevas) y desde `scripts/migrate_thresholds_2026_04_27.py` (DBs existentes).
+3. **Direction canónica en código** (no del CSV): `psi/null_rate/ordering_violations` → `higher_worse`; `gini/ks` → `lower_worse`. El CSV se ignora en este campo por errores humanos detectados.
+4. **Defaults cuando el CSV no trae la métrica esperada:** psi (0.10/0.20), null_rate (0.03/0.10), gini_target (0.35/0.25), ks_target (0.20/0.15), ord_target (1/2), gini_scorecard_var (0.15/0.05). El último es nuevo; consenso del CSV.
+5. **Filtros del CSV:** ignorar `gini_INTERCEPTO`, ignorar variables `EXTRA_SERC` (intermedias, no scorecard), ignorar targets fuera de `TARGET_VARIABLES`. Variables de scorecard en SERC se mapean a canónico vía `serc_to_canonical` (ej. `gini_EDAD` → `gini_edad`).
+6. **No preservar histórico de thresholds** (sin SCD2-close): `DELETE FROM META_METRIC_THRESHOLDS` y reinsertar. Los thresholds globales originales no tenían valor analítico — eran configuración temporal.
+7. **Borrar también `FACT_METRICS_HISTORY`** entera: regenerable por backfill con los nuevos thresholds. Coherente con tirar el histórico de thresholds.
+8. `AlertEvaluator` actualizado: `_metric_map` re-keyed a `(metric_name, model_registry_id)`; `get_metric_id` y los 6 call-sites en `metrics/calculator.py` pasan `model_registry_id`.
+
+**Razones.**
+- Per-segmento es el estándar de calibración del scorecard (cada `bb_<n>` tiene su propio comportamiento). Globales no reflejaban esa realidad.
+- `direction` canónica en código blinda contra errores humanos en el CSV (que se detectaron) y deja una sola fuente de verdad.
+- Defaults explícitos en código permiten que el bootstrap funcione aunque el CSV evolucione: si crédito agrega una variable nueva al scorecard pero olvida actualizar el CSV, el bootstrap no falla.
+- Borrar histórico (vs SCD2-close) refleja la intención: los globales no eran un threshold "vigente" que se está retirando, eran un placeholder.
+
+**Alternativas descartadas.**
+- Mantener globales como fallback y solo agregar per-segmento como override: el bug del CSV (omisiones en algunos segmentos) haría que un segmento sin entrada caiga al global, ocultando que falta calibración. Mejor: insertar default explícito per-segmento, visible en la DB.
+- Confiar en `direction` del CSV: errores detectados (gini con `higher_worse`, etc.). Costo de validar humano > costo de aplicar regla canónica.
+- SCD2-cerrar globales antes de insertar per-segmento: agrega filas sin valor analítico (los globales no eran un estado operativo legítimo).
+
+**Verificación.**
+- 68/68 tests pasan (incluye 10 nuevos en `tests/test_threshold_loader.py`).
+- Bootstrap fresh sobre SQLite: 315 thresholds, 0 globales, todos con `model_registry_id` poblado y `direction` canónica.
+- Pipeline `--no-email --no-llm`: 231 métricas calculadas, PDF generado.
+- RDS post-migración: 541 filas FACT_METRICS_HISTORY borradas + 20 globales borrados; 315 per-segmento insertados. Re-ejecución reporta "ya migrado" (idempotente).

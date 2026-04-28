@@ -168,7 +168,7 @@ def get_ordering_violations_for_metric(
 
     Args:
         origination_week: semana de origen (= calculation_week - lag para este target)
-        metric_type: nombre del target (ej: 'b_malo8_13', 'first_payment_default2')
+        metric_type: nombre del target (ej: 'b_malo2_4', 'b_malo8_13')
         ascending: True si debe crecer con score, False si debe decrecer (default)
 
     Returns:

@@ -52,11 +52,12 @@ MISSING_SENTINEL = -100
 NUM_BINS_NUMERIC = 10
 
 TARGET_VARIABLES: dict[str, dict] = {
-    "b_malo2_4":              {"lag_semanas": 4,  "ascending_order": False},
-    "b_malo4_6":              {"lag_semanas": 6,  "ascending_order": False},
-    "b_malo8_13":             {"lag_semanas": 8,  "ascending_order": False},
-    "b_malo8_16":             {"lag_semanas": 16, "ascending_order": False},
-    "first_payment_default2": {"lag_semanas": 2,  "ascending_order": False},
+    "b_malo2_4":   {"lag_semanas": 4,  "ascending_order": False},
+    "b_malo4_6":   {"lag_semanas": 6,  "ascending_order": False},
+    "b_malo8_13":  {"lag_semanas": 13, "ascending_order": False},
+    "b_malo8_16":  {"lag_semanas": 16, "ascending_order": False},
+    "b_malo14_26": {"lag_semanas": 26, "ascending_order": False},
+    "b_malo14_52": {"lag_semanas": 52, "ascending_order": False},
 }
 
 
@@ -77,7 +78,6 @@ class ModelBootstrap:
         self._registry_map: dict[str, int] = {}      # submodel_id -> surrogate id
         self._variable_map: dict[tuple[str, str], int] = {}  # (submodel_id, var_name) -> var_id
         self._score_var_map: dict[str, int] = {}      # submodel_id -> score variable_id
-        self._metric_map: dict[str, int] = {}         # metric_name -> metric_id
 
     def _resolve_baseline_path(self) -> Path:
         """Resolve baseline CSV path: explicit name > glob > fallback."""
@@ -207,30 +207,31 @@ class ModelBootstrap:
         return len(rows)
 
     def _populate_meta_metric_thresholds(self) -> int:
-        global_thresholds: list[tuple] = [
-            ("psi", 0.10, 0.20, "higher_worse"),
-            ("null_rate", 0.03, 0.10, "higher_worse"),
-        ]
-        for tname in TARGET_VARIABLES:
-            global_thresholds.extend([
-                (f"gini_{tname}", 0.35, 0.25, "lower_worse"),
-                (f"ks_{tname}", 0.20, 0.15, "lower_worse"),
-                (f"ordering_violations_{tname}", 1, 2, "higher_worse"),
-            ])
-        rows = []
-        for metric, warn, crit, direction in global_thresholds:
-            rows.append(MetaMetricThresholds(
-                metric_name=metric,
-                model_registry_id=None,
-                warning_threshold=warn,
-                critical_threshold=crit,
-                direction=direction,
-                valid_from=date(2025, 1, 1),
-                valid_to=None,
-            ))
+        """Persiste thresholds per-segmento desde el CSV de crédito.
+
+        Una fila por (segmento, métrica). Si el CSV no trae una métrica
+        esperada, se usa el default de `threshold_loader`. Variables intermedias
+        del CSV (EXTRA_SERC) y métricas sobrantes se ignoran. La `direction`
+        se aplica desde la regla canónica, no desde el CSV. Ver ADR §8.2.23.
+        """
+        from mlmonitor.data.threshold_loader import (
+            compute_thresholds_for_segment,
+            parse_thresholds_csv,
+        )
+
+        csv_path = self.raw_dir / "tresholds_monitoreo.csv"
+        csv_lookup = parse_thresholds_csv(csv_path)
+
+        rows: list[MetaMetricThresholds] = []
+        for submodel_id, registry_id in self._registry_map.items():
+            for kwargs in compute_thresholds_for_segment(submodel_id, registry_id, csv_lookup):
+                rows.append(MetaMetricThresholds(
+                    **kwargs,
+                    valid_from=date(2025, 1, 1),
+                    valid_to=None,
+                ))
         self.session.add_all(rows)
         self.session.flush()
-        self._metric_map = {r.metric_name: r.id for r in rows}
         logger.info("META_METRIC_THRESHOLDS: %d rows", len(rows))
         return len(rows)
 

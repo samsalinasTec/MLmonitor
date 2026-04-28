@@ -30,7 +30,7 @@ class AlertEvaluator:
 
     def __init__(self, session: Session):
         self._thresholds_cache: dict = {}
-        self._metric_map: dict[str, int] = {}  # metric_name → metric_id
+        self._metric_map: dict[tuple[str, int | None], int] = {}  # (metric_name, model_registry_id) → id
         self._load_thresholds(session)
 
     def _load_thresholds(self, session: Session) -> None:
@@ -42,8 +42,7 @@ class AlertEvaluator:
         for r in rows:
             key = (r.metric_name, r.model_registry_id)  # model_registry_id es None para globales
             self._thresholds_cache[key] = r
-            if r.metric_name not in self._metric_map:
-                self._metric_map[r.metric_name] = r.id
+            self._metric_map[key] = r.id
 
     def get_threshold(self, metric_name: str, model_registry_id: int) -> MetaMetricThresholds | None:
         """Busca umbral específico del modelo; si no existe, usa global (model_registry_id=None)."""
@@ -52,9 +51,12 @@ class AlertEvaluator:
             return specific
         return self._thresholds_cache.get((metric_name, None))
 
-    def get_metric_id(self, metric_name: str) -> int | None:
-        """Retorna el ID surrogado del threshold por nombre de métrica."""
-        return self._metric_map.get(metric_name)
+    def get_metric_id(self, metric_name: str, model_registry_id: int) -> int | None:
+        """Retorna el ID del threshold per-segmento; fallback al global si no existe."""
+        specific = self._metric_map.get((metric_name, model_registry_id))
+        if specific is not None:
+            return specific
+        return self._metric_map.get((metric_name, None))
 
     def evaluate(
         self, metric_name: str, value: float, model_registry_id: int
@@ -184,7 +186,7 @@ class MetricsCalculator:
         )
         for vname, psi_val in psi_by_var.items():
             _, label = self.evaluator.evaluate("psi", psi_val, model_registry_id)
-            metric_id = self.evaluator.get_metric_id("psi")
+            metric_id = self.evaluator.get_metric_id("psi", model_registry_id)
             var_id = name_to_id.get(vname)
             if metric_id is not None:
                 rows.append(FactMetricsHistory(
@@ -201,7 +203,7 @@ class MetricsCalculator:
         # PSI máximo del segmento
         max_psi, max_var = get_max_psi(psi_by_var)
         _, label = self.evaluator.evaluate("psi", max_psi, model_registry_id)
-        metric_id = self.evaluator.get_metric_id("psi")
+        metric_id = self.evaluator.get_metric_id("psi", model_registry_id)
         if metric_id is not None:
             rows.append(FactMetricsHistory(
                 model_registry_id=model_registry_id,
@@ -216,7 +218,7 @@ class MetricsCalculator:
 
         # --- Tasas de nulos (solo inputs) ---
         null_rates = get_null_rates(self.session, model_registry_id, variable_map, current_week)
-        null_metric_id = self.evaluator.get_metric_id("null_rate")
+        null_metric_id = self.evaluator.get_metric_id("null_rate", model_registry_id)
         for vname, null_rate in null_rates.items():
             _, label = self.evaluator.evaluate("null_rate", null_rate, model_registry_id)
             var_id = name_to_id.get(vname)
@@ -249,7 +251,7 @@ class MetricsCalculator:
             if perf_metrics.get("gini") is not None:
                 mname = f"gini_{tname}"
                 _, label = self.evaluator.evaluate(mname, perf_metrics["gini"], model_registry_id)
-                metric_id = self.evaluator.get_metric_id(mname)
+                metric_id = self.evaluator.get_metric_id(mname, model_registry_id)
                 if metric_id is not None:
                     rows.append(FactMetricsHistory(
                         model_registry_id=model_registry_id,
@@ -265,7 +267,7 @@ class MetricsCalculator:
             if perf_metrics.get("ks") is not None:
                 mname = f"ks_{tname}"
                 _, label = self.evaluator.evaluate(mname, perf_metrics["ks"], model_registry_id)
-                metric_id = self.evaluator.get_metric_id(mname)
+                metric_id = self.evaluator.get_metric_id(mname, model_registry_id)
                 if metric_id is not None:
                     rows.append(FactMetricsHistory(
                         model_registry_id=model_registry_id,
@@ -286,7 +288,7 @@ class MetricsCalculator:
             n_v = violations.get("violations", 0)
             mname = f"ordering_violations_{tname}"
             _, label = self.evaluator.evaluate(mname, n_v, model_registry_id)
-            metric_id = self.evaluator.get_metric_id(mname)
+            metric_id = self.evaluator.get_metric_id(mname, model_registry_id)
             if metric_id is not None:
                 rows.append(FactMetricsHistory(
                     model_registry_id=model_registry_id,

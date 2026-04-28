@@ -26,7 +26,7 @@ def _build_performance_df(
     model_registry_id: int,
     origination_week: date,
     execution_week: date,
-    metric_type: str = "first_payment_default2",
+    metric_type: str = "b_malo2_4",
     score_max: int = 1000,
 ) -> pd.DataFrame:
     """Carga los outcomes de una semana y construye el DataFrame base."""
@@ -118,7 +118,7 @@ def get_gini_ks_for_segment(
     Args:
         model_registry_id: ID surrogado del registro del modelo (submodelo)
         origination_week: semana de surtimiento de la cohorte (disbursement week)
-        metric_type: nombre del target (ej: 'b_malo8_13', 'first_payment_default2')
+        metric_type: nombre del target (ej: 'b_malo2_4', 'b_malo8_13')
         lag_semanas: ventana de observacion del target
     """
     # Fuente primaria: datos individuales

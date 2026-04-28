@@ -14,13 +14,14 @@ Documentación del schema relacional, su semántica y las reglas de negocio que 
 
 ### 0.2 Variables target y lags
 
-| Target                  | lag_semanas | Semántica                               |
-|-------------------------|-------------|-----------------------------------------|
-| `first_payment_default2`| 2           | Default en primer pago (ventana corta)  |
-| `b_malo2_4`             | 4           | Malo a 2–4 semanas                      |
-| `b_malo4_6`             | 6           | Malo a 4–6 semanas                      |
-| `b_malo8_13`            | 8           | Malo a 8–13 semanas                     |
-| `b_malo8_16`            | 16          | Malo a 8–16 semanas (ventana larga)     |
+| Target         | lag_semanas | Semántica                               |
+|----------------|-------------|-----------------------------------------|
+| `b_malo2_4`    | 4           | Malo a 2–4 semanas                      |
+| `b_malo4_6`    | 6           | Malo a 4–6 semanas                      |
+| `b_malo8_13`   | 13          | Malo a 8–13 semanas                     |
+| `b_malo8_16`   | 16          | Malo a 8–16 semanas                     |
+| `b_malo14_26`  | 26          | Malo a 14–26 semanas (ventana media)    |
+| `b_malo14_52`  | 52          | Malo a 14–52 semanas (ventana larga)    |
 
 ### 0.3 Columnas de la data raw
 
@@ -52,12 +53,15 @@ Muestra semanal de créditos con outcomes y score. Cada fila es un crédito en u
 | `vintage`                | float  | **Semana de scoreo** (scoring week) como float (ej: `2025.36` = semana 36 de 2025). Típicamente ≈ `semana_num` |
 | `flg_baz_boost`          | int    | 1 = crédito scoreado por BazBoost; 0 = otro modelo                  |
 | `flg_surtida`            | int    | 1 = crédito efectivamente surtido (disbursed); 0 = no surtido       |
-| `first_payment_default2` | int    | Target: default en primer pago (lag 2 semanas). 0/1                 |
 | `b_malo2_4`              | int    | Target: malo a 2–4 semanas (lag 4). 0/1                            |
 | `b_malo4_6`              | int    | Target: malo a 4–6 semanas (lag 6). 0/1                            |
-| `b_malo8_13`             | int    | Target: malo a 8–13 semanas (lag 8). 0/1                           |
+| `b_malo8_13`             | int    | Target: malo a 8–13 semanas (lag 13). 0/1                          |
 | `b_malo8_16`             | int    | Target: malo a 8–16 semanas (lag 16). 0/1                          |
+| `b_malo14_26`            | int    | Target: malo a 14–26 semanas (lag 26). 0/1                         |
+| `b_malo14_52`            | int    | Target: malo a 14–52 semanas (lag 52). 0/1                         |
 | `semana_observacion`     | int    | **Semana de evaluación de outcomes** (entero ISO, ej: `202602`). Valor único por extract — es la fecha del snapshot. Los targets solo son confiables hasta esta semana. Un crédito surtido en semana S con target de lag L solo tiene outcome confiable si `semana_observacion >= S + L` |
+
+**Nota dev — lags 26 y 52:** los targets `b_malo14_26` y `b_malo14_52` existen como columnas del CSV pero su ETL no produce filas con los datos dummy actuales (semanas 32–41 de 2025): la cohorte madura requeriría origen 26 ó 52 semanas atrás de la semana de ejecución, que cae fuera del rango del dummy. Aparecerán cuando los CSVs cubran historia suficiente.
 
 **Filtros del ETL:** Solo se procesan créditos con `flg_baz_boost = 1` y `flg_surtida = 1`.
 
@@ -174,6 +178,7 @@ Razón para guardar bin edges en DB (decisions §8.2.6): evita hardcodear cuts e
 
 - Los score bins (`0-100`, `100-200`, …, `900-1000`) están definidos como constante en `bootstrap.py` (`SCORE_BINS`). Cambiar a bins dinámicos (percentiles, equi-width) requiere extender `_baseline_score_distributions()`.
 - `fisexo` es la única variable categórica del modelo actual, hardcodeada en `bootstrap.py`. Agregar un nuevo modelo con otras variables categóricas implica revisar ese hardcode.
+- **Cómo se sabe que una variable es "intermedia" (no input del scorecard).** La fuente de verdad de los inputs oficiales del modelo es `data/inputs/raw_tables/Variables_por_segmento.xlsx` (entregado por crédito). `src/mlmonitor/data/variable_mapping.py` cruza ese Excel contra el dump SERC (`variables_serc.csv`): lo que aparece en SERC pero no en el Excel queda listado como `EXTRA_SERC_VARIABLES` y se considera intermedio (cálculo derivado o lookup que SERC reporta pero no entra al regresor). `serc_to_canonical()` devuelve `None` para esas, así que el ETL las ignora y no aparecen en `META_VARIABLES`. Si crédito declara explícitamente que alguna intermedia debe monitorearse, hay que: (1) agregarla a `CANONICAL_VARIABLES` para el segmento que aplica, y (2) re-bootstrap.
 
 ### 2.3 `META_METRIC_THRESHOLDS`
 
@@ -181,12 +186,12 @@ Catálogo de métricas y umbrales de alerta. SCD2 por `(model_registry_id, metri
 
 Columnas clave:
 
-- `metric_name` (str): `"psi"`, `"null_rate"`, `"gini_b_malo8_13"`, `"ks_b_malo4_6"`, `"ordering_violations_b_malo2_4"`, etc.
-- `model_registry_id` (FK, nullable): si es `NULL`, el umbral aplica **globalmente** a todos los segmentos; si tiene valor, es específico de ese submodelo.
+- `metric_name` (str): `"psi"`, `"null_rate"`, `"gini_b_malo8_13"`, `"ks_b_malo4_6"`, `"ordering_violations_b_malo2_4"`, `"gini_edad"`, etc.
+- `model_registry_id` (FK): siempre poblado — los thresholds son **per-segmento** (ver §4.5 y ADR §8.2.23). El campo es nullable en el schema por compatibilidad SCD2 pero hoy todas las filas activas tienen valor.
 - `warning_threshold`, `critical_threshold` (float).
-- `direction` (str): `"higher_worse"` (PSI, null_rate, ordering_violations) o `"lower_worse"` (Gini, KS).
+- `direction` (str): `"higher_worse"` (PSI, null_rate, ordering_violations) o `"lower_worse"` (Gini, KS). Se aplica con regla canónica en código, no se confía en el CSV.
 
-El evaluador en `metrics/calculator.py::AlertEvaluator` busca primero umbral específico y cae a global si no existe. El acoplamiento `metric_id` ↔ SCD2 de thresholds es deuda conocida — ver [`../backlog.md`](../backlog.md) §4.
+El evaluador en `metrics/calculator.py::AlertEvaluator` busca por `(metric_name, model_registry_id)` y cae al global (`model_registry_id IS NULL`) si no existe — fallback que hoy queda inactivo (no se insertan globales) pero se preserva para futuras métricas globales explícitas. El acoplamiento `metric_id` ↔ SCD2 de thresholds es deuda conocida — ver [`../backlog.md`](../backlog.md) §4.
 
 ### 2.4 `META_BASELINE_DISTRIBUTIONS`
 
@@ -206,9 +211,7 @@ El baseline se construye desde `base_train_test_bb.csv` (formato WIDE, ~501K fil
 - **Segmentación:** columna `fiidsegmento` (1–11 = segmentos monitoreados del scorecard; pueden aparecer otros segmentos, p. ej. 14, que no forman parte del monitoreo del pipeline).
 - **Variables canónicas:** las de `CANONICAL_VARIABLES` en `variable_mapping.py` existen como columnas en el baseline con nombres canónicos (p. ej. `cp_mean_ti_8_13_rez`, `edad`, `fisexo`); no hace falta mapeo SERC→canónico para leerlas desde este CSV.
 - **Score:** columna `fnpuntaje` (0–1000).
-- **Targets en el baseline:** `b_malo2_4`, `b_malo4_6`, `b_malo8_13`, `b_malo8_16`, `b_malo14_26`.
-  - `first_payment_default2` **no existe** en el baseline (sí se monitorea en el pipeline) → el notebook de validación deja ese par segmento × target en NaN (ver `notebooks/README.md`).
-  - `b_malo14_26` sí existe en el baseline pero **no se monitorea** en el pipeline (lag demasiado largo para el uso operativo actual).
+- **Targets en el baseline:** `b_malo2_4`, `b_malo4_6`, `b_malo8_13`, `b_malo8_16`, `b_malo14_26`. `b_malo14_52` no aparece como columna en este CSV; sí en `muestra_weekly`.
 - **Otras columnas relevantes (no exhaustivo):** `fdregistro`, `fecha_solicitud`, `fecha_surt`, `vintage`, `vintage_bis`, `fcnombreproducto`, `fccolor`, `finivelriesgo`, `segmento_bb_concluyente`, `fdcsaldocapital`, `m_produc`, y decenas de variables transaccionales/buró no usadas como inputs del scorecard.
 
 ---
@@ -233,7 +236,7 @@ Outcomes agregados por decil de score. Una fila por `(model_registry_id, origina
 
 - `origination_week`: semana de **surtimiento** (ver §1.6).
 - `execution_week`: semana en que corrió el ETL = `origination_week + lag`.
-- `metric_type`: nombre del target (`b_malo2_4`, `first_payment_default2`, etc.). Una fila por target × score_bin × semana × segmento.
+- `metric_type`: nombre del target (`b_malo2_4`, `b_malo8_13`, etc.). Una fila por target × score_bin × semana × segmento.
 - `score_bin`, `score_midpoint`: intervalo del decil (`"0-100"`, midpoint 50) y su punto medio entero.
 - `count_total`, `count_event_real`: denominador y numerador. Las tasas se calculan al vuelo (`count_event_real / count_total`), no se almacenan.
 - `sum_predicted_score`: para calibración, score promedio = `sum_predicted_score / count_total`.
@@ -286,15 +289,16 @@ Extraídas de [`§0`](#0-datos-raw-y-contexto-de-negocio) y del código:
 
 | Target | lag_semanas | Semántica |
 |---|---|---|
-| `first_payment_default2` | 2 | Default en primer pago (ventana corta) |
 | `b_malo2_4` | 4 | Malo a 2–4 semanas |
 | `b_malo4_6` | 6 | Malo a 4–6 semanas |
-| `b_malo8_13` | 8 | Malo a 8–13 semanas |
-| `b_malo8_16` | 16 | Malo a 8–16 semanas (ventana larga) |
+| `b_malo8_13` | 13 | Malo a 8–13 semanas |
+| `b_malo8_16` | 16 | Malo a 8–16 semanas |
+| `b_malo14_26` | 26 | Malo a 14–26 semanas (ventana media) |
+| `b_malo14_52` | 52 | Malo a 14–52 semanas (ventana larga) |
 
-`b_malo14_26` existe en el baseline pero **no se monitorea** en el pipeline (lag demasiado largo para el uso operativo actual).
+**Nota sobre dev:** la ventana del CSV `S32_S41_2025` (semanas 32–41 de 2025) y `semana_observacion=2026-W02` permiten observar `b_malo8_13` (W2 − 13 = W41 ✓) y `b_malo8_16` (W2 − 16 = W38 ✓). El resto de targets requieren cohortes fuera de esa ventana y aparecerán cuando los CSVs cubran historia suficiente. En producción los lags 26 y 52 también pueden tardar varias semanas en empezar a poblarse hasta que el origen acumule historia.
 
-**Nota sobre dev:** el lag 16 (`b_malo8_16`) excede el rango de los datos dummy (semanas 32–41 de 2025, solo 10 semanas); los datos de producción cubren rangos más amplios, así que esto solo afecta al entorno de desarrollo.
+**Convención de `lag_semanas` para targets `b_malo<a>_<b>`:** se usa el **extremo superior** de la ventana (`b`) en todos los casos. Significa: número de semanas que un crédito necesita haber existido para observar el outcome completo de la ventana — es la maduración mínima requerida. (Corregido 2026-04-28: `b_malo8_13` cargaba `lag=8` por error; ver corrigendum en `docs/decisions.md` §8.2.22.)
 
 ### 4.2 Filtros del ETL
 
@@ -310,19 +314,36 @@ Para un target con lag `L` y semana de ejecución `W`:
 
 ### 4.4 Dirección de ordenamiento esperada
 
-- Tasas de **malo** (todas las variantes `b_malo*`, `first_payment_default2`): deben **decrecer** conforme sube el score (bajo score = alto riesgo). `ascending_order = False`.
+- Tasas de **malo** (todas las variantes `b_malo*`): deben **decrecer** conforme sube el score (bajo score = alto riesgo). `ascending_order = False`.
 - Tasas de **pago** (si aplica): deben **crecer** con el score. `ascending_order = True`.
 
 La tolerancia numérica de `check_ordering_violations` es `0.005` (medio punto porcentual).
 
-### 4.5 Umbrales por defecto
+### 4.5 Umbrales por segmento
 
-- **PSI**: `<0.10` OK, `0.10–0.20` WARNING, `>0.20` CRITICAL (`direction="higher_worse"`).
-- **null_rate**: umbrales similares configurados en `META_METRIC_THRESHOLDS`.
-- **Gini / KS**: `direction="lower_worse"` (valor bajo = mal).
-- **ordering_violations**: cuenta entera, `direction="higher_worse"`.
+**Fuente:** `data/inputs/raw_tables/tresholds_monitoreo.csv` (entregado por crédito), parseado por `data/threshold_loader.py` y persistido por `bootstrap.py::_populate_meta_metric_thresholds()`. Decisión documentada en ADR §8.2.23.
 
-Los valores exactos viven en `bootstrap.py::_insert_thresholds()` y se pueden ajustar SCD2.
+**Métricas por segmento** (~28 filas/segmento × 11 = ~315 filas activas):
+- `psi`, `null_rate` (2)
+- `gini_<target>`, `ks_<target>`, `ordering_violations_<target>` para los 6 targets de §0.2 (18)
+- `gini_<scorecard_var>` para cada variable canónica del segmento (8 a 15 según `len(CANONICAL_VARIABLES[seg])`)
+
+**Direction canónica (en código, no del CSV):**
+- `higher_worse`: `psi`, `null_rate`, `ordering_violations*`
+- `lower_worse`: `gini*`, `ks*`
+
+**Defaults** (cuando el CSV no trae la métrica esperada para el segmento):
+
+| Métrica                       | warning | critical |
+|-------------------------------|---------|----------|
+| `psi`                         | 0.10    | 0.20     |
+| `null_rate`                   | 0.03    | 0.10     |
+| `gini_<target>`               | 0.35    | 0.25     |
+| `ks_<target>`                 | 0.20    | 0.15     |
+| `ordering_violations_<target>`| 1       | 2        |
+| `gini_<scorecard_var>`        | 0.15    | 0.05     |
+
+**Filtros del CSV:** se ignoran filas con `EXTRA_SERC_VARIABLES` (intermedias del scorecard), `gini_INTERCEPTO`, y métricas/targets fuera del catálogo. Variables en formato SERC se mapean a canónico vía `serc_to_canonical` (p. ej. `gini_EDAD` → `gini_edad`).
 
 ### 4.6 Segmentación (BAZBOOST_V1)
 

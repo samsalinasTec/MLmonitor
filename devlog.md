@@ -8,6 +8,31 @@ Formato: encabezado por fecha ISO (`## YYYY-MM-DD`) + bullets cortos. Entradas m
 
 ## 2026-04-27
 
+- **Reemplazo del set de targets monitoreados (ADR §8.2.22).**
+  - Eliminado `first_payment_default2` por completo de la DB local (SQLite) y RDS — sin SCD2-cerrado, no era de interés operativo. Borrado en orden: `FACT_METRICS_HISTORY` (44), `FACT_PERFORMANCE_BINNED` (41), `FACT_PERFORMANCE_INDIVIDUAL` (25.952), `META_METRIC_THRESHOLDS` (3 globales), `META_VARIABLES` (11 — uno por segmento).
+  - Alta de `b_malo14_26` (lag 26) y `b_malo14_52` (lag 52) como targets nuevos. Insertadas 22 filas en `META_VARIABLES` (2 targets × 11 segmentos) + 6 thresholds globales (gini/ks/ordering_violations × 2 targets).
+  - Código actualizado: `data/bootstrap.py::TARGET_VARIABLES` (fuente de verdad), `metrics/performance.py` (default `metric_type="b_malo2_4"`), `metrics/business_metrics.py`, `db/models.py` (comentario), `report/templates/submodel_section.html` (col FPD removida), `analyst/prompts.py` (col FPD removida del prompt).
+  - Documentación: ADR `docs/decisions.md §8.2.22` agregado; `docs/architecture/data_model.md` §0.2/§0.3/§2.2/§3.2/§4.1/§4.4 actualizado; nota sobre asimetría del lag (`b_malo8_13` con lag=8) y aclaración de cómo se identifican variables intermedias (cruce `Variables_por_segmento.xlsx` ↔ `variables_serc.csv`).
+  - Migración a RDS: `scripts/migrate_targets_2026_04_27.py` (idempotente, dry-run por defecto, `--apply` para ejecutar). Aplicada con éxito; segunda corrida confirma idempotencia (0 cambios).
+  - Tests: 58/58 pasan.
+  - Notebook de exploración creado: `notebooks/exploracion_thresholds_2026_04_27.ipynb` (10 secciones + 5 dudas al final, read-only, validado punta a punta). README de notebooks actualizado con entrada y hallazgos preliminares.
+  - **Hallazgos del diff CSV vs DB:** 121 mismatches de `direction` (segmentos `bb_2..bb_11` invertidos), `b_malo8_16` faltante en los 11 segmentos del CSV, varios segmentos traen variables de scorecard que ya no están en `Variables_por_segmento.xlsx` (arrastre), 42 thresholds de variables intermedias (EXTRA_SERC), 10 INTERCEPTO. 0 duplicados, 0 inconsistencias warning/critical bajo la regla canónica.
+  - **Sigue:** revisar el notebook con crédito y resolver D1–D5 antes de implementar el loader.
+- **Corrección del lag de `b_malo8_13` (corrigendum a ADR §8.2.22).** El target se cargó por error con `lag_semanas=8` (extremo inferior); crédito confirma que la convención correcta es siempre el extremo superior de la ventana → `lag=13`. Consecuencias del bug: con `--date 2026-01-05` y CSV `S32_S41`, la cohorte buscada (W46 de 2025) caía fuera de los datos disponibles, dejando Gini/KS de `b_malo8_13` vacíos en el PDF (el template hardcodea ese target como primario). Fix:
+  - `bootstrap.py:57`: `lag_semanas=8` → `lag_semanas=13`.
+  - `scripts/migrate_lag_b_malo8_13_2026_04_28.py`: idempotente, dry-run por defecto. UPDATE 11 META_VARIABLES + DELETE 38 FACT_PERFORMANCE_BINNED + DELETE 25.273 FACT_PERFORMANCE_INDIVIDUAL. Aplicado en RDS; segunda corrida confirma idempotencia.
+  - Local SQLite reset: ETL detecta correctamente la cohorte W41 (origination_week 2025-10-06), genera 77 binned + 46.578 individual rows; pipeline calcula `gini_b_malo8_13` y `ks_b_malo8_13` (11 filas cada uno); PDF ahora muestra Gini/KS poblados.
+  - Docs: ADR §8.2.22 cierra la duda abierta como corrigendum; `data_model.md` §0.2/§0.3/§4.1 actualizados (lag=13, convención uniforme).
+  - Tests: 68/68 pasan.
+- **Thresholds per-segmento desde CSV (ADR §8.2.23).** Crédito resolvió D1–D5: variables intermedias se ignoran, faltantes → default, direction canónica en código, no preservar histórico.
+  - Nuevo módulo `src/mlmonitor/data/threshold_loader.py`: parsea el CSV (`bb_<n>` → `s<n>`), filtra `INTERCEPTO`/`EXTRA_SERC`/desconocidas, mapea SERC→canónico (`gini_EDAD` → `gini_edad`), aplica direction canónica en código, cae a defaults explícitos por bucket. Reusable desde bootstrap y migración.
+  - `bootstrap.py::_populate_meta_metric_thresholds` refactorizado: 20 globales hardcodeadas → 315 per-segmento (1×psi + 1×null_rate + 6×3 targets + N×scorecard_var por segmento). `valid_from=2025-01-01`.
+  - `metrics/calculator.py::AlertEvaluator`: `_metric_map` re-keyed a `(metric_name, model_registry_id)`; `get_metric_id` ahora exige `model_registry_id`. 6 call-sites actualizados. Fallback al global preservado para futuras métricas globales explícitas (hoy inactivo).
+  - Nuevo `scripts/migrate_thresholds_2026_04_27.py` (idempotente, dry-run por defecto, `--apply`): borra `FACT_METRICS_HISTORY` entera + `META_METRIC_THRESHOLDS` entera, inserta 315 per-segmento. Borrado el `migrate_targets_2026_04_27.py` ya consumido.
+  - **Migración a RDS aplicada:** 541 filas FACT_METRICS_HISTORY + 20 globales borrados; 315 per-segmento insertados. Segunda corrida confirma idempotencia ("ya migrado, salir").
+  - Local SQLite reset y validado: bootstrap (315 thresholds, 0 globales) → ETL → pipeline → PDF (231 métricas).
+  - Tests: 68/68 pasan (10 nuevos en `tests/test_threshold_loader.py`: direction canónica, normalización SERC, filtros, defaults, conteos por segmento, smoke contra el CSV real).
+  - Documentación: ADR `docs/decisions.md §8.2.23` agregado; `docs/architecture/data_model.md §2.3` y §4.5 actualizados (de "umbrales por defecto" a "umbrales por segmento" con tabla de defaults y reglas de filtros).
 - **ADR §8.2.21 implementada.** `docker/entrypoint.sh` ahora lee `RUN_DATE`, `SKIP_ETL`, `NO_EMAIL`, `NO_LLM` (env vars opcionales). Sin overrides, comportamiento idéntico al schedule semanal.
 - Imagen `v0.1.1` + `latest` pusheada a ECR (`930067561911.dkr.ecr.us-east-1.amazonaws.com/mlmonitor`). Task def `mlmonitor:2` registrada apuntando a `:latest`.
 - Smoke test ECS con `--overrides` (RUN_DATE=2026-01-05, SKIP_ETL=1, NO_EMAIL=1, NO_LLM=1): exit 0, 4 env vars aplicadas correctamente, pipeline corrió en ~14s sin tocar SES/Bedrock.

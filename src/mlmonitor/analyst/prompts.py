@@ -75,9 +75,9 @@ Analiza el siguiente segmento y genera un análisis detallado en español.
 {% for bmalo, n_v in ordering_violations.items() %}{% if n_v > 0 %}- Violaciones de orden {{ bmalo }}: {{ n_v }} bin(s) fuera de secuencia{% endif %}{% endfor %}
 
 ### Tabla de negocio por decil (score ascendente = menor riesgo)
-| Score Bin | FPD (%) | Malo 2-4 (%) | Malo 8-13 (%) |
-|-----------|---------|--------------|---------------|
-{% for row in business_table %}| {{ row.score_bin }} | {{ "%.1f"|format((row.first_payment_default2_rate or 0) * 100) }}% | {{ "%.1f"|format((row.b_malo2_4_rate or 0) * 100) }}% | {{ "%.1f"|format((row.b_malo8_13_rate or 0) * 100) }}% |
+| Score Bin | Malo 2-4 (%) | Malo 8-13 (%) |
+|-----------|--------------|---------------|
+{% for row in business_table %}| {{ row.score_bin }} | {{ "%.1f"|format((row.b_malo2_4_rate or 0) * 100) }}% | {{ "%.1f"|format((row.b_malo8_13_rate or 0) * 100) }}% |
 {% endfor %}
 
 ### Alertas activas

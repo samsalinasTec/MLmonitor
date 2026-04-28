@@ -131,7 +131,6 @@
                 <th>Score Bin</th>
                 <th>Midpoint</th>
                 <th>Total</th>
-                <th>FPD (%)</th>
                 <th>Malo 2-4 (%)</th>
                 <th>Malo 4-6 (%)</th>
                 <th>Malo 8-13 (%)</th>
@@ -144,7 +143,6 @@
                 <td>{{ row.score_bin }}</td>
                 <td>{{ row.score_midpoint }}</td>
                 <td>{{ row.count_total | int }}</td>
-                <td>{{ "%.2f" | format((row.first_payment_default2_rate or 0) * 100) }}%</td>
                 <td>{{ "%.2f" | format((row.b_malo2_4_rate or 0) * 100) }}%</td>
                 <td>{{ "%.2f" | format((row.b_malo4_6_rate or 0) * 100) }}%</td>
                 <td>{{ "%.2f" | format((row.b_malo8_13_rate or 0) * 100) }}%</td>

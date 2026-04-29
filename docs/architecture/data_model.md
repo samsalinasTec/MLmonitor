@@ -150,8 +150,9 @@ Columnas clave:
 - `model_id` (str): identificador del scorecard padre. Hoy: `"BAZBOOST_V1"`.
 - `submodel_id` (str): `s1`–`s11`.
 - `score_min`, `score_max` (int): rango del score. Parametrizable por modelo.
-- `lag_semanas` (int): lag por defecto para este submodelo (pero el lag operativo vive en `META_VARIABLES.lag_semanas` por target).
 - `feature_count`, `training_cutoff_date`, `owner_team`: metadata.
+
+> El lag operativo vive en `META_VARIABLES.lag_semanas` (uno por target). `MetaModelRegistry` no tiene un campo de lag — ver ADR §8.2.24.
 
 Reglas:
 

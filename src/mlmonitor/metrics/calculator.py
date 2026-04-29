@@ -237,7 +237,12 @@ class MetricsCalculator:
         # --- Gini, KS y violaciones de ordering — una entrada por variable target ---
         for target in target_vars:
             tname = target.variable_name
-            lag = target.lag_semanas or 8
+            if target.lag_semanas is None:
+                raise ValueError(
+                    f"Target '{tname}' (registry_id={model_registry_id}) has lag_semanas=NULL. "
+                    "Every target must declare its lag explicitly in META_VARIABLES."
+                )
+            lag = target.lag_semanas
             origination_week = current_week - timedelta(weeks=lag)
             ascending = target.ascending_order if target.ascending_order is not None else False
 

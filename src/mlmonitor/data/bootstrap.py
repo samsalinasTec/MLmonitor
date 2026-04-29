@@ -121,7 +121,6 @@ class ModelBootstrap:
                 target_definition="Probabilidad de incumplimiento",
                 score_min=0,
                 score_max=1000,
-                lag_semanas=None,
                 feature_count=feature_count,
                 training_cutoff_date=None,
                 owner_team=OWNER_TEAM,

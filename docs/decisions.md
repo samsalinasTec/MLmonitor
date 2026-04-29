@@ -344,3 +344,30 @@ La implementación de esta decisión está en §8.2.18.
 - Bootstrap fresh sobre SQLite: 315 thresholds, 0 globales, todos con `model_registry_id` poblado y `direction` canónica.
 - Pipeline `--no-email --no-llm`: 231 métricas calculadas, PDF generado.
 - RDS post-migración: 541 filas FACT_METRICS_HISTORY borradas + 20 globales borrados; 315 per-segmento insertados. Re-ejecución reporta "ya migrado" (idempotente).
+
+
+## §8.2.24 Eliminar columna huérfana `MetaModelRegistry.lag_semanas`
+
+**Fecha:** 2026-04-28 · **Estado:** Aceptado · **Supersede:** —
+
+**Contexto.** `MetaModelRegistry.lag_semanas` (Integer, `default=8`) existía desde el diseño inicial pero nunca fue leída por ningún código de la aplicación. El `default=8` codificaba el lag erróneo viejo de `b_malo8_13` (corregido en ADR §8.2.22 corrigendum). El lag operativo vive en `MetaVariables.lag_semanas` (uno por target), que es donde semánticamente corresponde.
+
+**Decisión.**
+1. `ALTER TABLE META_MODEL_REGISTRY DROP COLUMN lag_semanas;` en RDS y SQLite.
+2. Eliminar la columna de `db/models.py::MetaModelRegistry`.
+3. Eliminar `lag_semanas=None` del `MetaModelRegistry(...)` en `bootstrap.py::_populate_meta_model_registry`.
+4. Documentar en `data_model.md §2.1` que el lag operativo vive en `META_VARIABLES.lag_semanas`, no en el registry.
+
+**Razones.**
+- Semánticamente el lag pertenece al **target** (`META_VARIABLES`), no al modelo. Modelos con varios targets tienen N lags distintos (BazBoost: 6 targets con lags 4/6/13/16/26/52); un solo campo a nivel registry sería ambiguo. Aplica a cualquier paradigma de ML futuro: regresión lineal, XGBoost, time-series — el lag siempre es propiedad del outcome que se predice.
+- La columna huérfana es **deuda activa**: cualquier código nuevo que tropiece con ella podría asumir incorrectamente que `MetaModelRegistry.lag_semanas` es la fuente de verdad y dispararse `default=8` (el bug que acabamos de corregir).
+- YAGNI: si en el futuro un modelo nuevo necesita un horizonte temporal a nivel registry (escenario hipotético), se agrega una columna con nombre semántico claro (`prediction_horizon_weeks`?) en su momento. Mantener especulativamente una columna mal nombrada no es estrategia de extensibilidad.
+
+**Alternativas descartadas.**
+- Mantener la columna y cambiar `default=8` → `default=None`: deja código muerto en el schema sin valor agregado. La columna nunca se lee — el default no importa.
+- Mantener la columna "por si futuros modelos la necesitan": especulación sin caso de uso concreto. Schema cleanup ahora vs. eventual schema redesign cuando emerja la necesidad real.
+
+**Verificación.**
+- 68/68 tests pasan.
+- Bootstrap fresh sobre SQLite: schema sin la columna; pipeline end-to-end OK.
+- RDS: `ALTER TABLE META_MODEL_REGISTRY DROP COLUMN lag_semanas` aplicado vía script one-shot. Idempotente (chequea `information_schema.columns`).

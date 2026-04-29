@@ -76,7 +76,6 @@ def _insert_registry(session):
             model_description=f"Segmento {seg_id} — datos de test",
             model_type="scorecard",
             score_min=0, score_max=1000,
-            lag_semanas=TARGET_LAG,
             valid_from=WEEK_0,
             valid_to=None,
         ))

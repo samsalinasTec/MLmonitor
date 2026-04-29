@@ -73,30 +73,48 @@ class ReportBuilder:
                 )
                 .all()
             )
+        for tv in all_targets:
+            if tv.lag_semanas is None:
+                raise ValueError(
+                    f"Target '{tv.variable_name}' (registry_id={tv.model_registry_id}) has lag_semanas=NULL. "
+                    "Every target must declare its lag explicitly in META_VARIABLES."
+                )
+
         performance_coverage = []
         performance_weeks: dict[str, date] = {}
-        for tv in sorted(all_targets, key=lambda v: v.lag_semanas or 8):
-            lag = tv.lag_semanas or 8
-            cutoff = calculation_week - timedelta(weeks=lag)
+        for tv in sorted(all_targets, key=lambda v: v.lag_semanas):
+            cutoff = calculation_week - timedelta(weeks=tv.lag_semanas)
             performance_coverage.append({
                 "target": tv.variable_name,
-                "lag": lag,
+                "lag": tv.lag_semanas,
                 "cutoff_date": cutoff,
             })
             performance_weeks[tv.variable_name] = cutoff
 
-        primary_lag = all_targets[0].lag_semanas if all_targets else 8
-        if primary_lag is None:
-            primary_lag = 8
-        performance_week = calculation_week - timedelta(weeks=primary_lag)
+        if all_targets:
+            primary_lag = all_targets[0].lag_semanas
+            performance_week = calculation_week - timedelta(weeks=primary_lag)
+        else:
+            primary_lag = None
+            performance_week = calculation_week
 
         # Cargar mapa de métricas: {metric_id → metric_name}
+        # + thresholds por segmento: {model_registry_id → {metric_name → {warn, crit, direction}}}
         threshold_rows = (
             self.session.query(MetaMetricThresholds)
             .filter(MetaMetricThresholds.valid_to.is_(None))
             .all()
         )
         metric_name_map: dict[int, str] = {r.id: r.metric_name for r in threshold_rows}
+        thresholds_by_segment: dict[int, dict[str, dict]] = {}
+        for r in threshold_rows:
+            if r.model_registry_id is not None:
+                seg_th = thresholds_by_segment.setdefault(r.model_registry_id, {})
+                seg_th[r.metric_name] = {
+                    "warn": r.warning_threshold,
+                    "crit": r.critical_threshold,
+                    "direction": r.direction or "higher_worse",
+                }
 
         # Construir SegmentMetrics por segmento
         segments = []
@@ -120,6 +138,7 @@ class ReportBuilder:
                 variable_map=variable_map,
                 target_vars=target_vars,
                 metric_name_map=metric_name_map,
+                thresholds=thresholds_by_segment.get(reg.id, {}),
                 calculation_week=calculation_week,
                 performance_week=performance_week,
             )
@@ -164,6 +183,7 @@ class ReportBuilder:
         variable_map: dict[int, str],
         target_vars: list,
         metric_name_map: dict[int, str],
+        thresholds: dict[str, dict],
         calculation_week: date,
         performance_week: date,
     ) -> SegmentMetrics:
@@ -238,12 +258,16 @@ class ReportBuilder:
         active_alerts = []
         for key, row in metrics_dict.items():
             if _flag(row) > 0:
+                mname = metric_name_map.get(row.metric_id, "")
+                th = thresholds.get(mname, {})
                 active_alerts.append({
                     "metric": key,
                     "value": row.metric_value,
                     "label": row.alert_label,
                     "flag": _flag(row),
                     "details": row.details,
+                    "warn_threshold": th.get("warn"),
+                    "crit_threshold": th.get("crit"),
                 })
         active_alerts.sort(key=lambda x: -x["flag"])
 
@@ -275,4 +299,5 @@ class ReportBuilder:
             null_rate_alerts=null_rate_alerts,
             active_alerts=active_alerts,
             business_table=business_table,
+            thresholds=thresholds,
         )

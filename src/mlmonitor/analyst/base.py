@@ -25,6 +25,7 @@ class SegmentMetrics:
     null_rate_alerts: list[dict]  # [{"variable": str, "rate": float, "label": str}]
     active_alerts: list[dict]     # [{"metric": str, "value": float, "label": str, ...}]
     business_table: list[dict]    # lista de deciles con tasas b_malo por score bin
+    thresholds: dict = field(default_factory=dict)  # {metric_base_name: {warn, crit, direction}}
 
 
 @dataclass

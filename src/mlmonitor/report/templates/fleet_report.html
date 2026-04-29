@@ -9,6 +9,8 @@
     </style>
 </head>
 <body>
+{# Target primario para Gini/KS en tablas resumen. Deuda: mover a MetaModelRegistry.primary_target. #}
+{% set primary_target = 'b_malo8_13' %}
 
 <!-- ============================================================ -->
 <!-- PORTADA -->
@@ -19,7 +21,7 @@
     <div class="cover-subtitle">Crédito — {{ context.model_name }}</div>
     <div class="cover-meta">
         <p><strong>Modelo:</strong> {{ context.model_id }}</p>
-        <p><strong>Variable objetivo:</strong> 26_42</p>
+        <p><strong>Variable objetivo:</strong> {{ primary_target }}</p>
         <p><strong>Fecha de generación:</strong> {{ generation_date }}</p>
         <p><strong>Semana de cálculo:</strong> {{ context.calculation_week }}</p>
         <p><strong>Cobertura de performance por target:</strong></p>
@@ -65,27 +67,30 @@
             <th>Segmento</th>
             <th>Descripción</th>
             <th>Estado</th>
-            <th>PSI Max</th>
-            <th>Gini</th>
-            <th>KS</th>
+            <th>PSI Max (variable)</th>
+            <th>Gini ({{ primary_target }})</th>
+            <th>KS ({{ primary_target }})</th>
             <th>Alertas</th>
         </tr>
     </thead>
     <tbody>
         {% for seg in context.segments %}
-        {% set fpd_gini = seg.gini.get('b_malo8_13') %}
-        {% set fpd_ks = seg.ks.get('b_malo8_13') %}
+        {% set fpd_gini = seg.gini.get(primary_target) %}
+        {% set fpd_ks = seg.ks.get(primary_target) %}
+        {% set psi_th = seg.thresholds.get('psi', {}) %}
+        {% set gini_th = seg.thresholds.get('gini_' ~ primary_target, {}) %}
+        {% set ks_th = seg.thresholds.get('ks_' ~ primary_target, {}) %}
         <tr>
             <td><strong>{{ seg.segment_id }}</strong></td>
             <td>{{ seg.segment_description }}</td>
             <td><span class="badge badge-{{ seg.overall_status | lower }}">{{ seg.overall_status }}</span></td>
-            <td class="value-{{ 'ok' if seg.psi_max is none or seg.psi_max < 0.10 else 'warning' if seg.psi_max < 0.20 else 'critical' }}">
-                {% if seg.psi_max is not none %}{{ "%.3f" | format(seg.psi_max) }}{% else %}—{% endif %}
+            <td class="value-{{ 'ok' if seg.psi_max is none or seg.psi_max < (psi_th.warn or 0.10) else 'warning' if seg.psi_max < (psi_th.crit or 0.20) else 'critical' }}">
+                {% if seg.psi_max is not none %}{{ "%.3f" | format(seg.psi_max) }}{% if seg.psi_max_variable %} <span style="font-size:8pt; color:#666;">({{ seg.psi_max_variable }})</span>{% endif %}{% else %}—{% endif %}
             </td>
-            <td class="value-{{ 'ok' if fpd_gini is none or fpd_gini >= 0.35 else 'warning' if fpd_gini >= 0.25 else 'critical' }}">
+            <td class="value-{{ 'ok' if fpd_gini is none or fpd_gini > (gini_th.warn or 0.35) else 'warning' if fpd_gini > (gini_th.crit or 0.25) else 'critical' }}">
                 {% if fpd_gini is not none %}{{ "%.3f" | format(fpd_gini) }}{% else %}—{% endif %}
             </td>
-            <td class="value-{{ 'ok' if fpd_ks is none or fpd_ks >= 0.20 else 'warning' if fpd_ks >= 0.15 else 'critical' }}">
+            <td class="value-{{ 'ok' if fpd_ks is none or fpd_ks > (ks_th.warn or 0.20) else 'warning' if fpd_ks > (ks_th.crit or 0.15) else 'critical' }}">
                 {% if fpd_ks is not none %}{{ "%.3f" | format(fpd_ks) }}{% else %}—{% endif %}
             </td>
             <td>{{ seg.active_alerts | length }}</td>
@@ -125,23 +130,23 @@
                 <th>Segmento</th>
                 <th>Estado</th>
                 <th>Alertas Activas</th>
-                <th>PSI Max</th>
-                <th>Gini FPD</th>
-                <th>KS FPD</th>
+                <th>PSI Max (variable)</th>
+                <th>Gini ({{ primary_target }})</th>
+                <th>KS ({{ primary_target }})</th>
                 <th>Viol. Orden (total)</th>
             </tr>
         </thead>
         <tbody>
             {% for seg in context.segments %}
-            {% set fpd_gini = seg.gini.get('b_malo8_13') %}
-            {% set fpd_ks = seg.ks.get('b_malo8_13') %}
+            {% set fpd_gini = seg.gini.get(primary_target) %}
+            {% set fpd_ks = seg.ks.get(primary_target) %}
             {% set total_viol = seg.ordering_violations.values() | sum %}
             <tr>
                 <td class="rank-num">{{ loop.index }}</td>
                 <td><strong>{{ seg.segment_id }}</strong> — {{ seg.segment_description }}</td>
                 <td><span class="badge badge-{{ seg.overall_status | lower }}">{{ seg.overall_status }}</span></td>
                 <td>{{ seg.active_alerts | length }}</td>
-                <td>{% if seg.psi_max is not none %}{{ "%.3f" | format(seg.psi_max) }}{% else %}—{% endif %}</td>
+                <td>{% if seg.psi_max is not none %}{{ "%.3f" | format(seg.psi_max) }}{% if seg.psi_max_variable %} <span style="font-size:8pt; color:#666;">({{ seg.psi_max_variable }})</span>{% endif %}{% else %}—{% endif %}</td>
                 <td>{% if fpd_gini is not none %}{{ "%.3f" | format(fpd_gini) }}{% else %}—{% endif %}</td>
                 <td>{% if fpd_ks is not none %}{{ "%.3f" | format(fpd_ks) }}{% else %}—{% endif %}</td>
                 <td>{{ total_viol }}</td>

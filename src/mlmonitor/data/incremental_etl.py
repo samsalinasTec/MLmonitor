@@ -98,9 +98,14 @@ class IncrementalETL:
                     if v.binning_rules and v.binning_rules.get("type") == "fixed_cuts":
                         self._score_bin_cuts[reg.id] = v.binning_rules["cuts"]
                 elif v.variable_rol == "target":
+                    if v.lag_semanas is None:
+                        raise ValueError(
+                            f"Target '{v.variable_name}' (segment registry_id={reg.id}) has lag_semanas=NULL. "
+                            "Every target must declare its lag explicitly in META_VARIABLES."
+                        )
                     targets.append({
                         "name": v.variable_name,
-                        "lag_semanas": v.lag_semanas or 8,
+                        "lag_semanas": v.lag_semanas,
                         "ascending_order": v.ascending_order if v.ascending_order is not None else False,
                     })
 

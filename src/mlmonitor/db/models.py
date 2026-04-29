@@ -71,7 +71,6 @@ class MetaModelRegistry(Base):
     target_definition = Column(String(500))  # qué predice el modelo en lenguaje natural
     score_min = Column(Integer, default=0)
     score_max = Column(Integer, default=1000)
-    lag_semanas = Column(Integer, default=8)
     feature_count = Column(Integer)
     training_cutoff_date = Column(Date)
     owner_team = Column(String(100))

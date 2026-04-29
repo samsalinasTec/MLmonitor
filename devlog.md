@@ -6,6 +6,21 @@ Formato: encabezado por fecha ISO (`## YYYY-MM-DD`) + bullets cortos. Entradas m
 
 ---
 
+## 2026-04-28
+
+- **Fix `Fecha de generación` en portada del PDF.** El orchestrator pasaba `generation_date=calculation_date` al renderer, haciendo que la portada mostrara la semana de cálculo en ambos campos. Eliminado el argumento para que el renderer use `date.today()` (su default). Ahora `Fecha de generación` = fecha real de ejecución, `Semana de cálculo` = semana analizada. Cambio en `pipeline/orchestrator.py` (1 línea).
+- **Consolidación del target primario en templates del reporte.** El template `fleet_report.html` tenía `26_42` hardcodeado en la portada (bug) y `b_malo8_13` hardcodeado en 3 lugares distintos (tabla de flota y ranking). Ahora hay una sola variable Jinja2 `{% set primary_target = 'b_malo8_13' %}` al inicio del template; la portada, la tabla de estado de flota y el ranking de urgencia la leen de ahí. `submodel_section.html` también se actualizó (usaba `row.b_malo8_13_rate` literal; ahora `row[primary_target ~ '_rate']`). Total: 5 sustituciones en 2 archivos. Deuda registrada en comentario: mover `primary_target` a `MetaModelRegistry` para que sea configurable por modelo.
+- **Thresholds visibles en el reporte PDF.** Antes el lector no tenía forma de saber qué umbrales disparaban WARNING/CRITICAL. Cambios:
+  - `analyst/base.py`: nuevo campo `thresholds: dict` en `SegmentMetrics`.
+  - `report/builder.py`: carga `warning_threshold`/`critical_threshold`/`direction` de `META_METRIC_THRESHOLDS` por segmento y los pasa como `seg.thresholds` + enriquece cada alerta activa con `warn_threshold`/`crit_threshold`.
+  - `report/templates/submodel_section.html`: tabla "Métricas Clave" tiene 2 columnas nuevas (Warn, Crit) con valores del segmento; lista "Alertas Activas" muestra `(umbral: warn / crit)` junto a cada alerta.
+  - `report/templates/fleet_report.html`: headers de "Estado por Segmento" y "Ranking de Urgencia" ahora dicen `PSI Max (variable)`, `Gini (b_malo8_13)`, `KS (b_malo8_13)` en vez de solo "PSI Max", "Gini", "KS". La celda de PSI Max muestra el nombre de la variable entre paréntesis.
+  - Total: 4 archivos tocados, 0 cambios en DB/schema.
+- **Fix colores/badges hardcodeados en templates.** Los templates usaban umbrales fijos (Gini: 0.35/0.25, KS: 0.20/0.15, PSI: 0.10/0.20, ordering: 1/2) para decidir color CSS y badge, ignorando los thresholds per-segmento de `META_METRIC_THRESHOLDS`. Esto causaba que un valor como Gini=0.2073 apareciera en rojo (CRITICAL por el hardcode 0.25) aunque la DB tiene warn=0.30/crit=0.20 para ese segmento (→ WARNING). Ahora `fleet_report.html` y `submodel_section.html` leen los umbrales de `seg.thresholds` para colorear y asignar badges, con fallback a los defaults anteriores si no hay threshold.
+- **Notebook `hallazgo_s5_s10_semana_2026_01_05.ipynb`.** Documenta que `variables_serc_S32_S41.csv` contiene 2 créditos con `fdregistro_solicitud` en enero 2026 (fuera del rango S32–S41 2025): crédito 49092877 (s5, 2026-01-05) y crédito 49162705 (s10, 2026-01-11). Esto causa PSI = 17.3+ al correr el pipeline con `--date 2026-01-05` (distribución de n=1 vs baseline). Pendiente de confirmar con crédito si es error del extract.
+
+---
+
 ## 2026-04-27
 
 - **Reemplazo del set de targets monitoreados (ADR §8.2.22).**
@@ -18,6 +33,15 @@ Formato: encabezado por fecha ISO (`## YYYY-MM-DD`) + bullets cortos. Entradas m
   - Notebook de exploración creado: `notebooks/exploracion_thresholds_2026_04_27.ipynb` (10 secciones + 5 dudas al final, read-only, validado punta a punta). README de notebooks actualizado con entrada y hallazgos preliminares.
   - **Hallazgos del diff CSV vs DB:** 121 mismatches de `direction` (segmentos `bb_2..bb_11` invertidos), `b_malo8_16` faltante en los 11 segmentos del CSV, varios segmentos traen variables de scorecard que ya no están en `Variables_por_segmento.xlsx` (arrastre), 42 thresholds de variables intermedias (EXTRA_SERC), 10 INTERCEPTO. 0 duplicados, 0 inconsistencias warning/critical bajo la regla canónica.
   - **Sigue:** revisar el notebook con crédito y resolver D1–D5 antes de implementar el loader.
+- **Drop columna huérfana `MetaModelRegistry.lag_semanas` (ADR §8.2.24).** Columna nunca leída por la aplicación, con `default=8` que codificaba el lag erróneo viejo. El lag operativo vive en `MetaVariables.lag_semanas` (uno por target) — semánticamente el lag es propiedad del outcome, no del modelo. Cambios:
+  - `db/models.py:74`: columna eliminada.
+  - `bootstrap.py:124`: removido `lag_semanas=None` del `MetaModelRegistry(...)`.
+  - `tests/conftest.py:79`: removido `lag_semanas=TARGET_LAG` del fixture (era residuo).
+  - `data_model.md §2.1`: nota explícita de que el lag vive en META_VARIABLES.
+  - Script one-shot `migrate_drop_lag_semanas_2026_04_28.py` (idempotente, chequea `information_schema`): aplicado en RDS, segunda corrida confirma idempotencia. Borrado tras consumir.
+  - Tests: 68/68 pasan; SQLite reset + bootstrap + ETL + pipeline OK.
+- **Limpieza de fallbacks `or 8` para `lag_semanas`.** Los magic numbers `or 8` en `data/incremental_etl.py:103`, `metrics/calculator.py:240` y `report/builder.py:78,79,88` codificaban el lag erróneo viejo de `b_malo8_13`. Reemplazados por validación explícita: si un target tiene `lag_semanas=NULL`, se levanta `ValueError` con el nombre del target y el `registry_id` afectado. Pendiente para próxima iteración (ADR aparte): la columna huérfana `MetaModelRegistry.lag_semanas` (con `default=8`, no leída por ningún código) en `db/models.py:74`.
+- **Borrados scripts one-shot ya consumidos:** `migrate_thresholds_2026_04_27.py` y `migrate_lag_b_malo8_13_2026_04_28.py`. Trazabilidad en ADR §8.2.22 (corrigendum), §8.2.23, devlog y git log.
 - **Corrección del lag de `b_malo8_13` (corrigendum a ADR §8.2.22).** El target se cargó por error con `lag_semanas=8` (extremo inferior); crédito confirma que la convención correcta es siempre el extremo superior de la ventana → `lag=13`. Consecuencias del bug: con `--date 2026-01-05` y CSV `S32_S41`, la cohorte buscada (W46 de 2025) caía fuera de los datos disponibles, dejando Gini/KS de `b_malo8_13` vacíos en el PDF (el template hardcodea ese target como primario). Fix:
   - `bootstrap.py:57`: `lag_semanas=8` → `lag_semanas=13`.
   - `scripts/migrate_lag_b_malo8_13_2026_04_28.py`: idempotente, dry-run por defecto. UPDATE 11 META_VARIABLES + DELETE 38 FACT_PERFORMANCE_BINNED + DELETE 25.273 FACT_PERFORMANCE_INDIVIDUAL. Aplicado en RDS; segunda corrida confirma idempotencia.

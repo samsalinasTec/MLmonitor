@@ -135,7 +135,6 @@ class PipelineOrchestrator:
         pdf_path = renderer.render_pdf(
             context=context,
             result=llm_result,
-            generation_date=calculation_date,
             filename=f"mlmonitor_{calculation_date.isoformat()}.pdf",
         )
 

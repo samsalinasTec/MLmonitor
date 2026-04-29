@@ -39,6 +39,9 @@
         <li class="alert-{{ alert.label | lower }}">
             <strong>[{{ alert.label }}]</strong>
             {{ alert.metric }}: {{ "%.4f" | format(alert.value or 0) }}
+            {% if alert.warn_threshold is not none and alert.crit_threshold is not none %}
+            <span style="font-size:8pt; color:#666;">(umbral: {{ "%.2f" | format(alert.warn_threshold) }} / {{ "%.2f" | format(alert.crit_threshold) }})</span>
+            {% endif %}
         </li>
         {% endfor %}
     </ul>
@@ -52,67 +55,89 @@
                 <th>Métrica</th>
                 <th>Valor</th>
                 <th>Estado</th>
+                <th>Warn</th>
+                <th>Crit</th>
                 <th>Nota</th>
             </tr>
         </thead>
         <tbody>
             {% if seg.psi_max is not none %}
+            {% set psi_th = seg.thresholds.get('psi', {}) %}
+            {% set psi_w = psi_th.warn or 0.10 %}
+            {% set psi_c = psi_th.crit or 0.20 %}
             <tr class="metric-row">
                 <td>PSI Máximo</td>
-                <td class="value-{{ 'ok' if seg.psi_max < 0.10 else 'warning' if seg.psi_max < 0.20 else 'critical' }}">
+                <td class="value-{{ 'ok' if seg.psi_max < psi_w else 'warning' if seg.psi_max < psi_c else 'critical' }}">
                     {{ "%.4f" | format(seg.psi_max) }}
                 </td>
                 <td>
-                    <span class="badge badge-{{ 'ok' if seg.psi_max < 0.10 else 'warning' if seg.psi_max < 0.20 else 'critical' }}">
-                        {{ 'OK' if seg.psi_max < 0.10 else 'WARNING' if seg.psi_max < 0.20 else 'CRITICAL' }}
+                    <span class="badge badge-{{ 'ok' if seg.psi_max < psi_w else 'warning' if seg.psi_max < psi_c else 'critical' }}">
+                        {{ 'OK' if seg.psi_max < psi_w else 'WARNING' if seg.psi_max < psi_c else 'CRITICAL' }}
                     </span>
                 </td>
+                <td>{% if psi_th.warn is not none %}{{ "%.2f" | format(psi_th.warn) }}{% else %}—{% endif %}</td>
+                <td>{% if psi_th.crit is not none %}{{ "%.2f" | format(psi_th.crit) }}{% else %}—{% endif %}</td>
                 <td>Variable: {{ seg.psi_max_variable }}</td>
             </tr>
             {% endif %}
             {% for bmalo, gini_val in seg.gini.items() %}
             {% if gini_val is not none %}
+            {% set gini_th = seg.thresholds.get('gini_' ~ bmalo, {}) %}
+            {% set gini_w = gini_th.warn or 0.35 %}
+            {% set gini_c = gini_th.crit or 0.25 %}
             <tr class="metric-row">
                 <td>Gini — {{ bmalo }}</td>
-                <td class="value-{{ 'ok' if gini_val >= 0.35 else 'warning' if gini_val >= 0.25 else 'critical' }}">
+                <td class="value-{{ 'ok' if gini_val > gini_w else 'warning' if gini_val > gini_c else 'critical' }}">
                     {{ "%.4f" | format(gini_val) }}
                 </td>
                 <td>
-                    <span class="badge badge-{{ 'ok' if gini_val >= 0.35 else 'warning' if gini_val >= 0.25 else 'critical' }}">
-                        {{ 'OK' if gini_val >= 0.35 else 'WARNING' if gini_val >= 0.25 else 'CRITICAL' }}
+                    <span class="badge badge-{{ 'ok' if gini_val > gini_w else 'warning' if gini_val > gini_c else 'critical' }}">
+                        {{ 'OK' if gini_val > gini_w else 'WARNING' if gini_val > gini_c else 'CRITICAL' }}
                     </span>
                 </td>
+                <td>{% if gini_th.warn is not none %}{{ "%.2f" | format(gini_th.warn) }}{% else %}—{% endif %}</td>
+                <td>{% if gini_th.crit is not none %}{{ "%.2f" | format(gini_th.crit) }}{% else %}—{% endif %}</td>
                 <td>Cohorte {{ context.performance_weeks.get(bmalo, context.performance_week) }}</td>
             </tr>
             {% endif %}
             {% endfor %}
             {% for bmalo, ks_val in seg.ks.items() %}
             {% if ks_val is not none %}
+            {% set ks_th = seg.thresholds.get('ks_' ~ bmalo, {}) %}
+            {% set ks_w = ks_th.warn or 0.20 %}
+            {% set ks_c = ks_th.crit or 0.15 %}
             <tr class="metric-row">
                 <td>KS — {{ bmalo }}</td>
-                <td class="value-{{ 'ok' if ks_val >= 0.20 else 'warning' if ks_val >= 0.15 else 'critical' }}">
+                <td class="value-{{ 'ok' if ks_val > ks_w else 'warning' if ks_val > ks_c else 'critical' }}">
                     {{ "%.4f" | format(ks_val) }}
                 </td>
                 <td>
-                    <span class="badge badge-{{ 'ok' if ks_val >= 0.20 else 'warning' if ks_val >= 0.15 else 'critical' }}">
-                        {{ 'OK' if ks_val >= 0.20 else 'WARNING' if ks_val >= 0.15 else 'CRITICAL' }}
+                    <span class="badge badge-{{ 'ok' if ks_val > ks_w else 'warning' if ks_val > ks_c else 'critical' }}">
+                        {{ 'OK' if ks_val > ks_w else 'WARNING' if ks_val > ks_c else 'CRITICAL' }}
                     </span>
                 </td>
+                <td>{% if ks_th.warn is not none %}{{ "%.2f" | format(ks_th.warn) }}{% else %}—{% endif %}</td>
+                <td>{% if ks_th.crit is not none %}{{ "%.2f" | format(ks_th.crit) }}{% else %}—{% endif %}</td>
                 <td>Cohorte {{ context.performance_weeks.get(bmalo, context.performance_week) }}</td>
             </tr>
             {% endif %}
             {% endfor %}
             {% for bmalo, n_v in seg.ordering_violations.items() %}
+            {% set ov_th = seg.thresholds.get('ordering_violations_' ~ bmalo, {}) %}
+            {% set ov_w = ov_th.warn or 1.0 %}
+            {% set ov_c = ov_th.crit or 2.0 %}
             <tr class="metric-row">
                 <td>Violaciones Orden — {{ bmalo }}</td>
-                <td class="value-{{ 'ok' if n_v == 0 else 'warning' if n_v < 2 else 'critical' }}">
+                <td class="value-{{ 'ok' if n_v < ov_w else 'warning' if n_v < ov_c else 'critical' }}">
                     {{ n_v }}
                 </td>
                 <td>
-                    <span class="badge badge-{{ 'ok' if n_v == 0 else 'warning' if n_v < 2 else 'critical' }}">
-                        {{ 'OK' if n_v == 0 else 'WARNING' if n_v < 2 else 'CRITICAL' }}
+                    <span class="badge badge-{{ 'ok' if n_v < ov_w else 'warning' if n_v < ov_c else 'critical' }}">
+                        {{ 'OK' if n_v < ov_w else 'WARNING' if n_v < ov_c else 'CRITICAL' }}
                     </span>
                 </td>
+                <td>{% if ov_th.warn is not none %}{{ "%.1f" | format(ov_th.warn) }}{% else %}—{% endif %}</td>
+                <td>{% if ov_th.crit is not none %}{{ "%.1f" | format(ov_th.crit) }}{% else %}—{% endif %}</td>
                 <td>Deciles con orden incorrecto</td>
             </tr>
             {% endfor %}
@@ -145,7 +170,7 @@
                 <td>{{ row.count_total | int }}</td>
                 <td>{{ "%.2f" | format((row.b_malo2_4_rate or 0) * 100) }}%</td>
                 <td>{{ "%.2f" | format((row.b_malo4_6_rate or 0) * 100) }}%</td>
-                <td>{{ "%.2f" | format((row.b_malo8_13_rate or 0) * 100) }}%</td>
+                <td>{{ "%.2f" | format((row[primary_target ~ '_rate'] or 0) * 100) }}%</td>
                 <td>{{ "%.2f" | format((row.b_malo8_16_rate or 0) * 100) }}%</td>
             </tr>
             {% endfor %}

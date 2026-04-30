@@ -23,9 +23,15 @@ class SegmentMetrics:
     ks: dict              # {b_malo_col: float | None} — KS por variable de performance
     ordering_violations: dict  # {b_malo_col: int} — violaciones de monotonía por variable
     null_rate_alerts: list[dict]  # [{"variable": str, "rate": float, "label": str}]
-    active_alerts: list[dict]     # [{"metric": str, "value": float, "label": str, ...}]
+    # active_alerts:
+    #   - metric: clave técnica (ej. "psi_edad", "gini_b_malo8_13", "psi_max")
+    #   - metric_kind: prefijo legible ("PSI", "PSI Máximo", "Null rate", "Gini", "KS", "Violaciones de orden")
+    #   - display_label: descripción corta de la variable si aplica, sino el nombre técnico
+    #   - value, label, flag, details, warn_threshold, crit_threshold
+    active_alerts: list[dict]
     business_table: list[dict]    # lista de deciles con tasas b_malo por score bin
     thresholds: dict = field(default_factory=dict)  # {metric_base_name: {warn, crit, direction}}
+    variable_descriptions: dict = field(default_factory=dict)  # {variable_name: short_description}
 
 
 @dataclass
@@ -41,6 +47,7 @@ class AnalysisContext:
     total_submodels: int = 11  # total de sub-scorecards del modelo (para portada)
     performance_coverage: list[dict] = field(default_factory=list)   # [{target, lag, cutoff_date}]
     performance_weeks: dict[str, date] = field(default_factory=dict)  # {target_name: cutoff_date}
+    primary_target: str = "b_malo8_13"   # target usado para columnas resumen de la flota
     latest_data_week: date | None = None  # ultima semana con datos en FACT_DISTRIBUTIONS
     data_lag_weeks: int | None = None     # semanas de desfase vs calendario actual
 

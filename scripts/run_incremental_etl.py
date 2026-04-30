@@ -75,18 +75,19 @@ def main():
 
     engine = create_db_engine(db_url)
 
-    # Resolve CSV paths: explicit > glob > fallback
+    # Resolve CSV paths: explicit > glob (latest by name) > fallback
+    # Convention: filenames end in _YYYYMMDD.csv so sorted()[-1] = most recent.
     if args.serc_file:
         serc_path = raw_dir / args.serc_file
     else:
         serc_candidates = sorted(raw_dir.glob("variables_serc_*.csv"))
-        serc_path = serc_candidates[0] if serc_candidates else raw_dir / "variables_serc.csv"
+        serc_path = serc_candidates[-1] if serc_candidates else raw_dir / "variables_serc.csv"
 
     if args.weekly_file:
         weekly_path = raw_dir / args.weekly_file
     else:
         weekly_candidates = sorted(raw_dir.glob("muestra_weekly_*.csv"))
-        weekly_path = weekly_candidates[0] if weekly_candidates else raw_dir / "muestra_weekly.csv"
+        weekly_path = weekly_candidates[-1] if weekly_candidates else raw_dir / "muestra_weekly.csv"
 
     variables_df = None
     weekly_df = None

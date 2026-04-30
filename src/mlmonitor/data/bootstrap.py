@@ -52,13 +52,58 @@ MISSING_SENTINEL = -100
 NUM_BINS_NUMERIC = 10
 
 TARGET_VARIABLES: dict[str, dict] = {
-    "b_malo2_4":   {"lag_semanas": 4,  "ascending_order": False},
     "b_malo4_6":   {"lag_semanas": 6,  "ascending_order": False},
     "b_malo8_13":  {"lag_semanas": 13, "ascending_order": False},
-    "b_malo8_16":  {"lag_semanas": 16, "ascending_order": False},
     "b_malo14_26": {"lag_semanas": 26, "ascending_order": False},
-    "b_malo14_52": {"lag_semanas": 52, "ascending_order": False},
 }
+
+PRIMARY_TARGET = "b_malo8_13"
+
+
+def _load_variable_descriptions(raw_dir: Path) -> dict[str, str]:
+    """Load canonical variable short descriptions from Dicionario_Variables_BB.csv.
+
+    Returns {variable_name: short_description}.
+    """
+    csv_path = raw_dir / "Dicionario_Variables_BB.csv"
+    if not csv_path.exists():
+        logger.warning("Variable dictionary not found: %s", csv_path)
+        return {}
+    df = pd.read_csv(csv_path)
+    out: dict[str, str] = {}
+    for _, row in df.iterrows():
+        vname = str(row.get("Variable", "")).strip()
+        raw_desc = row.get("Descripción Corta")
+        if pd.isna(raw_desc) or str(raw_desc).strip() == "":
+            continue
+        desc = str(raw_desc).strip()
+        if vname and desc:
+            out[vname] = desc
+    logger.info("Loaded %d variable descriptions from %s", len(out), csv_path.name)
+    return out
+
+
+def _load_segment_descriptions(raw_dir: Path) -> dict[int, str]:
+    """Load segment short descriptions from Dicionario_Segmentos_BB.csv.
+
+    Returns {segment_id (int): short_description}.
+    """
+    csv_path = raw_dir / "Dicionario_Segmentos_BB.csv"
+    if not csv_path.exists():
+        logger.warning("Segment dictionary not found: %s", csv_path)
+        return {}
+    df = pd.read_csv(csv_path)
+    out: dict[int, str] = {}
+    for _, row in df.iterrows():
+        try:
+            seg_id = int(row["Segmento"])
+        except (ValueError, KeyError):
+            continue
+        desc = str(row.get("Descripción Corta", "")).strip()
+        if desc:
+            out[seg_id] = desc
+    logger.info("Loaded %d segment descriptions from %s", len(out), csv_path.name)
+    return out
 
 
 class ModelBootstrap:
@@ -78,6 +123,10 @@ class ModelBootstrap:
         self._registry_map: dict[str, int] = {}      # submodel_id -> surrogate id
         self._variable_map: dict[tuple[str, str], int] = {}  # (submodel_id, var_name) -> var_id
         self._score_var_map: dict[str, int] = {}      # submodel_id -> score variable_id
+
+        # Description lookups from CSV dictionaries
+        self._variable_descriptions = _load_variable_descriptions(self.raw_dir)
+        self._segment_descriptions = _load_segment_descriptions(self.raw_dir)
 
     def _resolve_baseline_path(self) -> Path:
         """Resolve baseline CSV path: explicit name > glob > fallback."""
@@ -111,12 +160,13 @@ class ModelBootstrap:
             submodel_id = f"s{seg_id}"
             group_name = SEGMENT_GROUP_NAMES.get(seg_id, "")
             feature_count = SEGMENT_FEATURE_COUNTS.get(seg_id)
+            seg_desc = self._segment_descriptions.get(seg_id, f"Segmento {seg_id} — {group_name}")
 
             rows.append(MetaModelRegistry(
                 model_id=MODEL_ID,
                 submodel_id=submodel_id,
                 model_name=MODEL_NAME,
-                model_description=f"Segmento {seg_id} — {group_name}",
+                model_description=seg_desc,
                 model_type=MODEL_TYPE,
                 target_definition="Probabilidad de incumplimiento",
                 score_min=0,
@@ -144,6 +194,9 @@ class ModelBootstrap:
             # Variables de input
             for vname in canonical_vars:
                 vtype = "categorical" if vname == "fisexo" else "numeric"
+                var_desc = self._variable_descriptions.get(vname)
+                if var_desc is None:
+                    logger.warning("No description found for variable '%s' (segment %d)", vname, seg_id)
                 rows.append(MetaVariables(
                     model_registry_id=reg_id,
                     variable_name=vname,
@@ -151,7 +204,7 @@ class ModelBootstrap:
                     variable_rol="input",
                     lag_semanas=None,
                     ascending_order=None,
-                    description=None,
+                    description=var_desc,
                     woe_categories=None,
                     binning_rules={"type": "quantile", "n_bins": NUM_BINS_NUMERIC} if vtype == "numeric" else None,
                     source_table=None,

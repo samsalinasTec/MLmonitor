@@ -15,6 +15,7 @@ from datetime import date, timedelta
 from sqlalchemy.orm import Session
 
 from mlmonitor.analyst.base import AnalysisContext, AnalysisResult, SegmentMetrics
+from mlmonitor.data.bootstrap import PRIMARY_TARGET
 from mlmonitor.db.models import (
     FactMetricsHistory,
     MetaMetricThresholds,
@@ -25,6 +26,36 @@ from mlmonitor.metrics.business_metrics import get_business_metrics_table
 
 STATUS_ORDER = {"CRITICAL": 0, "WARNING": 1, "OK": 2}
 _LABEL_TO_FLAG = {"OK": 0, "WARNING": 1, "CRITICAL": 2}
+
+
+def _classify_alert(
+    key: str,
+    metric_name: str,
+    psi_max_variable: str | None,
+    variable_descriptions: dict[str, str],
+) -> tuple[str, str]:
+    """Devuelve (metric_kind, display_label) para mostrar inline en el PDF.
+
+    Reemplaza el identificador técnico por la descripción corta cuando aplica
+    (PSI, null_rate). Para targets (gini/ks/ordering_violations) deja el nombre
+    del target porque no tiene descripción humana en el diccionario.
+    """
+    if key == "psi_max":
+        var = psi_max_variable or ""
+        return "PSI Máximo", variable_descriptions.get(var, var) if var else "PSI Máximo"
+    if key.startswith("psi_"):
+        var = key[len("psi_"):]
+        return "PSI", variable_descriptions.get(var, var)
+    if key.startswith("null_rate_"):
+        var = key[len("null_rate_"):]
+        return "Null rate", variable_descriptions.get(var, var)
+    if key.startswith("gini_"):
+        return "Gini", key[len("gini_"):]
+    if key.startswith("ks_"):
+        return "KS", key[len("ks_"):]
+    if key.startswith("ordering_violations_"):
+        return "Violaciones de orden", key[len("ordering_violations_"):]
+    return metric_name or key, key
 
 
 class ReportBuilder:
@@ -129,6 +160,11 @@ class ReportBuilder:
                 .all()
             )
             variable_map = {v.id: v.variable_name for v in var_rows if v.variable_rol != "target"}
+            variable_desc_map = {
+                v.variable_name: v.description
+                for v in var_rows
+                if v.variable_rol == "input" and v.description
+            }
             target_vars = [v for v in var_rows if v.variable_rol == "target"]
 
             seg_metrics = self._build_segment_metrics(
@@ -136,6 +172,7 @@ class ReportBuilder:
                 segment_id=reg.submodel_id,
                 segment_description=reg.model_description or reg.submodel_id,
                 variable_map=variable_map,
+                variable_descriptions=variable_desc_map,
                 target_vars=target_vars,
                 metric_name_map=metric_name_map,
                 thresholds=thresholds_by_segment.get(reg.id, {}),
@@ -155,6 +192,15 @@ class ReportBuilder:
             "critical": sum(1 for s in segments if s.overall_status == "CRITICAL"),
         }
 
+        active_target_names = {tv.variable_name for tv in all_targets}
+        if PRIMARY_TARGET in active_target_names:
+            resolved_primary_target = PRIMARY_TARGET
+        elif active_target_names:
+            mid_idx = len(performance_coverage) // 2
+            resolved_primary_target = performance_coverage[mid_idx]["target"]
+        else:
+            resolved_primary_target = PRIMARY_TARGET
+
         context = AnalysisContext(
             model_id=model_id,
             model_name=model_name,
@@ -166,6 +212,7 @@ class ReportBuilder:
             total_submodels=len(model_regs),
             performance_coverage=performance_coverage,
             performance_weeks=performance_weeks,
+            primary_target=resolved_primary_target,
         )
 
         # Llamada al LLM si hay analista
@@ -181,6 +228,7 @@ class ReportBuilder:
         segment_id: str,
         segment_description: str,
         variable_map: dict[int, str],
+        variable_descriptions: dict[str, str],
         target_vars: list,
         metric_name_map: dict[int, str],
         thresholds: dict[str, dict],
@@ -260,8 +308,13 @@ class ReportBuilder:
             if _flag(row) > 0:
                 mname = metric_name_map.get(row.metric_id, "")
                 th = thresholds.get(mname, {})
+                metric_kind, display_label = _classify_alert(
+                    key, mname, psi_max_variable, variable_descriptions
+                )
                 active_alerts.append({
                     "metric": key,
+                    "metric_kind": metric_kind,
+                    "display_label": display_label,
                     "value": row.metric_value,
                     "label": row.alert_label,
                     "flag": _flag(row),
@@ -285,7 +338,14 @@ class ReportBuilder:
         )
         business_table = []
         if not business_df.empty:
-            business_table = business_df.to_dict(orient="records")
+            # NaN → None para que el fallback `or 0` del template aplique.
+            # `.astype(object)` antes de `.where(...)` porque en columnas float64 el NaN
+            # no se reemplaza (dtype no admite None).
+            business_table = (
+                business_df.astype(object)
+                .where(business_df.notna(), None)
+                .to_dict(orient="records")
+            )
 
         return SegmentMetrics(
             segment_id=segment_id,
@@ -300,4 +360,5 @@ class ReportBuilder:
             active_alerts=active_alerts,
             business_table=business_table,
             thresholds=thresholds,
+            variable_descriptions=variable_descriptions,
         )

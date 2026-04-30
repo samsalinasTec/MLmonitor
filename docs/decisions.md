@@ -371,3 +371,50 @@ La implementación de esta decisión está en §8.2.18.
 - 68/68 tests pasan.
 - Bootstrap fresh sobre SQLite: schema sin la columna; pipeline end-to-end OK.
 - RDS: `ALTER TABLE META_MODEL_REGISTRY DROP COLUMN lag_semanas` aplicado vía script one-shot. Idempotente (chequea `information_schema.columns`).
+
+
+## §8.2.25 Reducir set operativo de targets de 6 a 3 (PROPUESTA — pendiente de aprobación)
+
+**Fecha:** 2026-04-29 · **Estado:** Propuesto · **Supersede:** parte de §8.2.22 (alta de `b_malo14_52`)
+
+**Contexto.** Tras §8.2.22 el set operativo quedó en 6 targets (`b_malo2_4`, `b_malo4_6`, `b_malo8_13`, `b_malo8_16`, `b_malo14_26`, `b_malo14_52`). En la práctica el negocio sólo evalúa **3 ventanas**: corta (`b_malo4_6`), media (`b_malo8_13` — primario actual) y larga (`b_malo14_26`). Las 3 restantes contaminan la sección "Metadata" y la tabla "Métricas de Negocio por Decil" del PDF semanal sin agregar valor analítico. Adicionalmente, `b_malo14_52` requiere lag de 52 semanas — irreal para detección temprana de drift.
+
+**Decisión.**
+1. **Código (ya aplicado en local, 2026-04-29):**
+   - `data/bootstrap.py::TARGET_VARIABLES` reducido a 3 entradas: `b_malo4_6` (lag 6), `b_malo8_13` (lag 13), `b_malo14_26` (lag 26).
+   - `analyst/prompts.py`, `report/templates/submodel_section.html`, `report/builder.py` ahora iteran dinámicamente sobre `performance_coverage` (sin hardcodes de targets).
+   - `tests/test_threshold_loader.py` actualizado para usar el nuevo set; `expected_total` derivado de `len(TARGET_VARIABLES)`.
+   - CSVs en `data/inputs/raw_tables/` siguen trayendo las 6 columnas de targets — el ETL los ignora defensivamente (no error, sólo log).
+2. **RDS (pendiente de autorización del usuario):**
+   ```sql
+   UPDATE meta_variables
+   SET valid_to = CURRENT_DATE
+   WHERE variable_rol = 'target'
+     AND variable_name IN ('b_malo2_4', 'b_malo8_16', 'b_malo14_52')
+     AND valid_to IS NULL;
+   ```
+   Cierre SCD2 (no DELETE) para preservar auditoría: registros vivos pasan a inactivos con `valid_to` poblado. **No tocar** `FACT_PERFORMANCE_BINNED`, `FACT_PERFORMANCE_INDIVIDUAL`, `FACT_METRICS_HISTORY` — su histórico se mantiene íntegro por reglas de auditoría sobre append-only.
+3. **Thresholds asociados** (`META_METRIC_THRESHOLDS` con `metric_name` ∈ `{gini_b_malo2_4, ks_b_malo2_4, ordering_violations_b_malo2_4, gini_b_malo8_16, ks_b_malo8_16, ordering_violations_b_malo8_16, gini_b_malo14_52, ks_b_malo14_52, ordering_violations_b_malo14_52}`): cerrar también vía `valid_to = CURRENT_DATE` por simetría con §8.2.23.
+4. Script idempotente `scripts/migrate_targets_2026_04_29.py` (a redactar tras aprobación) — dry-run por defecto, `--apply` para ejecutar; chequea `valid_to IS NULL` para idempotencia.
+
+**Razones.**
+- **SCD2-cerrar (vs DELETE como en §8.2.22 con `first_payment_default2`):** los 3 targets descontinuados **sí fueron operativos** durante un periodo (entrada legítima en bootstrap, posibles cargas históricas en `FACT_*`). Eliminar perdería la trazabilidad de cuándo y por qué dejaron de monitorearse. `first_payment_default2` se eliminó porque nunca debió existir; estos se retiran porque el negocio decidió enfocarse en 3 ventanas.
+- **Preservar `FACT_*`:** `FACT_PERFORMANCE_*` y `FACT_METRICS_HISTORY` son append-only por regla — su valor analítico (backfill, comparaciones históricas si en el futuro se reactiva un target) no debe perderse. Las consultas semanales filtran por joins con `META_VARIABLES.valid_to IS NULL`, así que con SCD2-cerrar los 3 targets ya no aparecerán en métricas nuevas.
+- **CSVs intactos:** los archivos que entrega crédito siguen trayendo 6 columnas. El ETL los ignora dinámicamente (filtro por `META_VARIABLES` activos). Esto desacopla el ciclo de operaciones del agente del ciclo de regeneración de extracts.
+
+**Alternativas descartadas.**
+- **DELETE puro de los registros activos en `META_VARIABLES`:** rompe FK soft de `FACT_*` con histórico (queries de auditoría que reconstruyen el estado a fecha X fallarían). Va contra la convención SCD2 del schema.
+- **Mantener los 6 y filtrar sólo en el reporte:** el costo de mantener thresholds, baselines y métricas calculadas para 3 targets que el negocio no mira es alto — más volumen en `FACT_METRICS_HISTORY`, más ruido en alertas, más prompts al LLM. Mejor excluirlos del cálculo desde la fuente.
+- **Borrar también `FACT_*` históricos (estilo §8.2.23):** §8.2.23 borró `FACT_METRICS_HISTORY` porque los thresholds globales no eran "vigentes" sino placeholders. Aquí los datos históricos sí son operativamente válidos para el periodo en que se calcularon — eliminar perdería información real.
+
+**Verificación esperada (post-apply en RDS).**
+- `SELECT COUNT(*) FROM meta_variables WHERE variable_rol='target' AND valid_to IS NULL;` → 33 (3 targets × 11 segmentos), antes 66.
+- `SELECT COUNT(*) FROM meta_variables WHERE variable_rol='target' AND valid_to = CURRENT_DATE;` → 33 (los recién cerrados).
+- `SELECT COUNT(*) FROM fact_performance_binned;` y `fact_metrics_history`: sin cambios.
+- Pipeline `--date <lunes>` post-migración: PDF muestra 3 columnas en "Métricas de Negocio por Decil" y 3 filas en "Performance" de Metadata.
+- Dry-run del script one-shot post-migración: 0 cambios (idempotente).
+
+**Pendiente para aplicar.**
+- Aprobación explícita del usuario.
+- Redacción del script `scripts/migrate_targets_2026_04_29.py`.
+- Ejecución manual (no automatizada) sobre RDS.

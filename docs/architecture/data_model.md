@@ -49,9 +49,11 @@ Muestra semanal de créditos con outcomes y score. Cada fila es un crédito en u
 | `fiidscoreds`            | int    | ID único de la solicitud de score (join key con `variables_serc`)   |
 | `fiidsegmento`           | int    | Segmento del scorecard (1–11)                                      |
 | `fnpuntaje`              | float  | Score total del scorecard                                           |
-| `semana_num`             | int    | **Semana de surtimiento** (disbursement week) como entero ISO (ej: `202536`) |
-| `vintage`                | float  | **Semana de scoreo** (scoring week) como float (ej: `2025.36` = semana 36 de 2025). Típicamente ≈ `semana_num` |
-| `flg_baz_boost`          | int    | 1 = crédito scoreado por BazBoost; 0 = otro modelo                  |
+| `semana_num`             | int    | **Semana de surtimiento** (disbursement week) como entero ISO (ej: `202536`). Coincide con la semana ISO de `fdfechasurt` cuando esa fecha existe. |
+| `semana_sol`             | int    | *(Opcional en algunos extracts.)* Semana ISO de **solicitud**; alineada con `fdfecsol` y con `vintage` en formato decimal. |
+| `vintage`                | float  | Semana de solicitud/registro en formato decimal (ej. `2025.36`). Cuando existen `semana_sol` / `fdfecsol`, coincide con ellos. **No** sustituye a `semana_num` para la lógica de madurez del ETL (esa usa surtimiento). |
+| `vintage_bis`            | float  | Semana de surtimiento en formato decimal; equivalente a `semana_num` cuando ambas columnas existen. |
+| `flg_baz_boost`          | int    | 1 = crédito scoreado por BazBoost; 0 = otro modelo. Si el extract es 100 % BazBoost y la columna no viene del origen, **añadirla** como constante `1` para no cambiar el filtro del ETL. |
 | `flg_surtida`            | int    | 1 = crédito efectivamente surtido (disbursed); 0 = no surtido       |
 | `b_malo2_4`              | int    | Target: malo a 2–4 semanas (lag 4). 0/1                            |
 | `b_malo4_6`              | int    | Target: malo a 4–6 semanas (lag 6). 0/1                            |
@@ -60,6 +62,12 @@ Muestra semanal de créditos con outcomes y score. Cada fila es un crédito en u
 | `b_malo14_26`            | int    | Target: malo a 14–26 semanas (lag 26). 0/1                         |
 | `b_malo14_52`            | int    | Target: malo a 14–52 semanas (lag 52). 0/1                         |
 | `semana_observacion`     | int    | **Semana de evaluación de outcomes** (entero ISO, ej: `202602`). Valor único por extract — es la fecha del snapshot. Los targets solo son confiables hasta esta semana. Un crédito surtido en semana S con target de lag L solo tiene outcome confiable si `semana_observacion >= S + L` |
+
+**Nota operativa (extracts upstream):**
+
+- Si el archivo trae la columna `semana` en lugar de `semana_num`, es la misma semántica: semana ISO de **surtimiento** (equivalente a la semana de `fdfechasurt`). Renombrar a `semana_num` antes de correr el ETL si el código no hace el alias.
+- `semana_observacion` suele **no** venir del warehouse: quien genera el extract debe agregarla con el **mismo** entero ISO en todas las filas — la semana en que se construyó el snapshot (techo hasta donde los targets son observables).
+- Los targets `b_malo8_16`, `b_malo14_26`, `b_malo14_52` pueden faltar en extracts parciales; el ETL omite esos targets con warning (comportamiento esperado). Los demás targets se calculan si la columna existe.
 
 **Nota dev — lags 26 y 52:** los targets `b_malo14_26` y `b_malo14_52` existen como columnas del CSV pero su ETL no produce filas con los datos dummy actuales (semanas 32–41 de 2025): la cohorte madura requeriría origen 26 ó 52 semanas atrás de la semana de ejecución, que cae fuera del rango del dummy. Aparecerán cuando los CSVs cubran historia suficiente.
 
@@ -297,7 +305,7 @@ Extraídas de [`§0`](#0-datos-raw-y-contexto-de-negocio) y del código:
 | `b_malo14_26` | 26 | Malo a 14–26 semanas (ventana media) |
 | `b_malo14_52` | 52 | Malo a 14–52 semanas (ventana larga) |
 
-**Nota sobre dev:** la ventana del CSV `S32_S41_2025` (semanas 32–41 de 2025) y `semana_observacion=2026-W02` permiten observar `b_malo8_13` (W2 − 13 = W41 ✓) y `b_malo8_16` (W2 − 16 = W38 ✓). El resto de targets requieren cohortes fuera de esa ventana y aparecerán cuando los CSVs cubran historia suficiente. En producción los lags 26 y 52 también pueden tardar varias semanas en empezar a poblarse hasta que el origen acumule historia.
+**Nota sobre dev:** la ventana del CSV `20260105_s32_s41` (semanas 32–41 de 2025, `semana_observacion=202602`) permite observar `b_malo8_13` (W2 − 13 = W41 ✓) y `b_malo8_16` (W2 − 16 = W38 ✓). El resto de targets requieren cohortes fuera de esa ventana y aparecerán cuando los CSVs cubran historia suficiente. En producción los lags 26 y 52 también pueden tardar varias semanas en empezar a poblarse hasta que el origen acumule historia.
 
 **Convención de `lag_semanas` para targets `b_malo<a>_<b>`:** se usa el **extremo superior** de la ventana (`b`) en todos los casos. Significa: número de semanas que un crédito necesita haber existido para observar el outcome completo de la ventana — es la maduración mínima requerida. (Corregido 2026-04-28: `b_malo8_13` cargaba `lag=8` por error; ver corrigendum en `docs/decisions.md` §8.2.22.)
 

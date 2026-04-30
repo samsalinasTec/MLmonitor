@@ -38,7 +38,7 @@
         {% for alert in seg.active_alerts %}
         <li class="alert-{{ alert.label | lower }}">
             <strong>[{{ alert.label }}]</strong>
-            {{ alert.metric }}: {{ "%.4f" | format(alert.value or 0) }}
+            {{ alert.metric_kind }} — {{ alert.display_label }}: {{ "%.4f" | format(alert.value or 0) }}
             {% if alert.warn_threshold is not none and alert.crit_threshold is not none %}
             <span style="font-size:8pt; color:#666;">(umbral: {{ "%.2f" | format(alert.warn_threshold) }} / {{ "%.2f" | format(alert.crit_threshold) }})</span>
             {% endif %}
@@ -77,7 +77,7 @@
                 </td>
                 <td>{% if psi_th.warn is not none %}{{ "%.2f" | format(psi_th.warn) }}{% else %}—{% endif %}</td>
                 <td>{% if psi_th.crit is not none %}{{ "%.2f" | format(psi_th.crit) }}{% else %}—{% endif %}</td>
-                <td>Variable: {{ seg.psi_max_variable }}</td>
+                <td>{{ seg.variable_descriptions.get(seg.psi_max_variable, seg.psi_max_variable) }}{% if seg.variable_descriptions.get(seg.psi_max_variable) %} <span style="font-size:8pt; color:#666;">({{ seg.psi_max_variable }})</span>{% endif %}</td>
             </tr>
             {% endif %}
             {% for bmalo, gini_val in seg.gini.items() %}
@@ -156,10 +156,9 @@
                 <th>Score Bin</th>
                 <th>Midpoint</th>
                 <th>Total</th>
-                <th>Malo 2-4 (%)</th>
-                <th>Malo 4-6 (%)</th>
-                <th>Malo 8-13 (%)</th>
-                <th>Malo 8-16 (%)</th>
+                {% for cov in context.performance_coverage %}
+                <th>{{ cov.target }} (%)</th>
+                {% endfor %}
             </tr>
         </thead>
         <tbody>
@@ -168,10 +167,10 @@
                 <td>{{ row.score_bin }}</td>
                 <td>{{ row.score_midpoint }}</td>
                 <td>{{ row.count_total | int }}</td>
-                <td>{{ "%.2f" | format((row.b_malo2_4_rate or 0) * 100) }}%</td>
-                <td>{{ "%.2f" | format((row.b_malo4_6_rate or 0) * 100) }}%</td>
-                <td>{{ "%.2f" | format((row[primary_target ~ '_rate'] or 0) * 100) }}%</td>
-                <td>{{ "%.2f" | format((row.b_malo8_16_rate or 0) * 100) }}%</td>
+                {% for cov in context.performance_coverage %}
+                {% set cell_color = row[cov.target ~ '_color'] %}
+                <td{% if cell_color %} style="background-color: {{ cell_color }};"{% endif %}>{{ "%.2f" | format((row[cov.target ~ '_rate'] or 0) * 100) }}%</td>
+                {% endfor %}
             </tr>
             {% endfor %}
         </tbody>

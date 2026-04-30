@@ -89,10 +89,15 @@ Configuradas en `mlmonitor/deploy/taskdef.json`. Lo sensible (DB_URL, emails) lo
 
 ### 3.2 Subir los CSVs semanales
 
+**Convención de nombres:** `<tipo>_<YYYYMMDD>_<segmentos>.csv` donde `YYYYMMDD` es la fecha del lunes de `semana_observacion` y va **primero** tras el prefijo del tipo. El auto-detect del ETL selecciona el archivo con nombre más alto lexicográficamente (`sorted()[-1]`); poniendo la fecha primero, el más reciente siempre gana sin importar el rango de segmentos.
+
 ```bash
-aws s3 cp variables_serc_<YYYYWW>.csv s3://ml-monitoring-reports-credito/inputs/raw_tables/
-aws s3 cp muestra_weekly_<YYYYWW>.csv  s3://ml-monitoring-reports-credito/inputs/raw_tables/
+# Ejemplo para un extract con semana_observacion 202614 (lunes 2026-03-30):
+aws s3 cp variables_serc_20260330_s26_s52.csv s3://ml-monitoring-reports-credito/inputs/raw_tables/
+aws s3 cp muestra_weekly_20260330_s26_s52.csv  s3://ml-monitoring-reports-credito/inputs/raw_tables/
 ```
+
+Si hay varios CSVs en el bucket de ciclos anteriores (histórico), el ETL siempre tomará el más reciente sin necesidad de borrar los viejos. Para forzar un archivo específico usar `--weekly-file` y `--serc-file`.
 
 El `base_train_test_bb.csv` ya vive en el bucket y no se reemplaza salvo re-entrenamiento del modelo (ver dudas D6).
 

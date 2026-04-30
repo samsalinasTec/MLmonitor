@@ -96,7 +96,35 @@ def get_business_metrics_table(
         return pd.DataFrame()
 
     data = list(by_bin.values())
-    return pd.DataFrame(data).sort_values("score_midpoint").reset_index(drop=True)
+    df = pd.DataFrame(data).sort_values("score_midpoint").reset_index(drop=True)
+
+    # Heatmap: por cada columna {target}_rate, calcular {target}_color con
+    # gradiente rojo (rgba) normalizado al min/max de la columna. Tasas más
+    # altas = celda más roja (mayor riesgo). Texto legible: alpha en [0.05, 0.85].
+    for tname in target_names:
+        rate_col = f"{tname}_rate"
+        color_col = f"{tname}_color"
+        if rate_col not in df.columns:
+            df[color_col] = None
+            continue
+        values = pd.to_numeric(df[rate_col], errors="coerce")
+        v_min = values.min(skipna=True)
+        v_max = values.max(skipna=True)
+        if pd.isna(v_min) or pd.isna(v_max) or v_max == v_min:
+            df[color_col] = [None] * len(df)
+            continue
+        rng = v_max - v_min
+        colors: list[str | None] = []
+        for v in values:
+            if pd.isna(v):
+                colors.append(None)
+                continue
+            norm = (v - v_min) / rng
+            alpha = 0.05 + norm * 0.80
+            colors.append(f"rgba(239, 68, 68, {alpha:.3f})")
+        df[color_col] = colors
+
+    return df
 
 
 def check_ordering_violations(

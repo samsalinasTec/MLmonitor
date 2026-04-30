@@ -101,6 +101,7 @@ class BedrockAnalyst(BaseAnalyst):
             "null_rate_alerts": segment.null_rate_alerts,
             "active_alerts": segment.active_alerts,
             "business_table": segment.business_table,
+            "performance_coverage": context.performance_coverage,
         })
         raw_response = self._call_llm(prompt)
         narrative, actions = self._parse_segment_response(raw_response)

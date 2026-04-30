@@ -33,7 +33,7 @@ body {
     page-break-after: always;
     height: 26cm;
     padding: 5cm 2cm 2cm 2cm;
-    background: linear-gradient(135deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
+    background: linear-gradient(135deg, #0a0e1a 0%, #16213e 45%, #1a1a3e 100%);
     color: white;
 }
 
@@ -41,14 +41,14 @@ body {
     font-size: 11pt;
     letter-spacing: 0.3em;
     text-transform: uppercase;
-    color: #e94560;
+    color: #8b5cf6;
     margin-bottom: 0.5cm;
-    font-weight: bold;
+    font-weight: 700;
 }
 
 .cover-title {
     font-size: 28pt;
-    font-weight: bold;
+    font-weight: 700;
     line-height: 1.2;
     margin-bottom: 0.5cm;
     color: white;
@@ -56,7 +56,7 @@ body {
 
 .cover-subtitle {
     font-size: 16pt;
-    color: #a0c4ff;
+    color: #06b6d4;
     margin-bottom: 1.5cm;
 }
 
@@ -79,8 +79,9 @@ body {
 /* ---- Headings ---- */
 h1 {
     font-size: 16pt;
-    color: #0f3460;
-    border-bottom: 2px solid #e94560;
+    color: #1a1a3e;
+    font-weight: 700;
+    border-bottom: 2px solid #8b5cf6;
     padding-bottom: 0.2cm;
     margin-top: 0.8cm;
     margin-bottom: 0.5cm;
@@ -89,8 +90,9 @@ h1 {
 
 h2 {
     font-size: 13pt;
-    color: #16213e;
-    border-left: 4px solid #e94560;
+    color: #1a1a3e;
+    font-weight: 600;
+    border-left: 4px solid #06b6d4;
     padding-left: 0.3cm;
     margin-top: 0.6cm;
     margin-bottom: 0.4cm;
@@ -99,7 +101,8 @@ h2 {
 
 h3 {
     font-size: 11pt;
-    color: #0f3460;
+    color: #1a1a3e;
+    font-weight: 600;
     margin-top: 0.4cm;
     margin-bottom: 0.3cm;
     page-break-after: avoid;
@@ -116,21 +119,21 @@ h3 {
 }
 
 .badge-ok {
-    background: #d4edda;
-    color: #155724;
-    border: 1px solid #c3e6cb;
+    background: #d1fae5;
+    color: #065f46;
+    border: 1px solid #10b981;
 }
 
 .badge-warning {
-    background: #fff3cd;
-    color: #856404;
-    border: 1px solid #ffc107;
+    background: #fef3c7;
+    color: #92400e;
+    border: 1px solid #f59e0b;
 }
 
 .badge-critical {
-    background: #f8d7da;
-    color: #721c24;
-    border: 1px solid #f5c6cb;
+    background: #fee2e2;
+    color: #991b1b;
+    border: 1px solid #ef4444;
 }
 
 /* ---- Tables ---- */
@@ -143,11 +146,11 @@ table {
 }
 
 thead th {
-    background: #0f3460;
+    background: #1a1a3e;
     color: white;
     padding: 0.15cm 0.3cm;
     text-align: left;
-    font-weight: bold;
+    font-weight: 700;
 }
 
 tbody tr:nth-child(even) {
@@ -164,9 +167,12 @@ td, th {
     vertical-align: middle;
 }
 
-td.value-ok { color: #155724; font-weight: bold; }
-td.value-warning { color: #856404; font-weight: bold; }
-td.value-critical { color: #721c24; font-weight: bold; }
+td.value-ok { color: #065f46; font-weight: bold; }
+td.value-warning { color: #92400e; font-weight: bold; }
+td.value-critical { color: #991b1b; font-weight: bold; }
+
+td, th { word-break: break-word; }
+.metric-row td:first-child { word-break: break-word; }
 
 /* ---- Fleet summary cards ---- */
 .fleet-cards {
@@ -199,22 +205,23 @@ td.value-critical { color: #721c24; font-weight: bold; }
     letter-spacing: 0.05em;
 }
 
-.fleet-card-total { background: #e8f4f8; }
-.fleet-card-ok { background: #d4edda; }
-.fleet-card-ok .card-number { color: #155724; }
-.fleet-card-warning { background: #fff3cd; }
-.fleet-card-warning .card-number { color: #856404; }
-.fleet-card-critical { background: #f8d7da; }
-.fleet-card-critical .card-number { color: #721c24; }
+.fleet-card-total { background: #dbeafe; }
+.fleet-card-total .card-number { color: #1e3a8a; }
+.fleet-card-ok { background: #d1fae5; }
+.fleet-card-ok .card-number { color: #065f46; }
+.fleet-card-warning { background: #fef3c7; }
+.fleet-card-warning .card-number { color: #92400e; }
+.fleet-card-critical { background: #fee2e2; }
+.fleet-card-critical .card-number { color: #991b1b; }
 
 /* ---- Narrative box ---- */
 .narrative-box {
     background: #f8f9fa;
-    border-left: 4px solid #0f3460;
+    border-left: 4px solid #3b82f6;
     padding: 0.4cm 0.5cm;
     margin: 0.4cm 0;
     font-size: 10pt;
-    color: #2c3e50;
+    color: #1f2937;
     border-radius: 0 4px 4px 0;
     page-break-inside: avoid;
 }
@@ -230,16 +237,18 @@ td.value-critical { color: #721c24; font-weight: bold; }
     margin-bottom: 0.1cm;
     border-radius: 3px;
     font-size: 9pt;
+    word-break: break-word;
+    line-height: 1.4;
 }
 
 .alert-list li.alert-warning {
-    background: #fff3cd;
-    border-left: 3px solid #ffc107;
+    background: #fef3c7;
+    border-left: 3px solid #f59e0b;
 }
 
 .alert-list li.alert-critical {
-    background: #f8d7da;
-    border-left: 3px solid #dc3545;
+    background: #fee2e2;
+    border-left: 3px solid #ef4444;
 }
 
 /* ---- Actions table ---- */
@@ -248,10 +257,10 @@ td.value-critical { color: #721c24; font-weight: bold; }
     text-align: center;
 }
 
-.priority-critico { color: #721c24; font-weight: bold; }
-.priority-alta { color: #856404; font-weight: bold; }
-.priority-media { color: #0c5460; font-weight: bold; }
-.priority-monitoreo { color: #155724; font-weight: bold; }
+.priority-critico { color: #991b1b; font-weight: 700; }
+.priority-alta { color: #92400e; font-weight: 700; }
+.priority-media { color: #1e40af; font-weight: 700; }
+.priority-monitoreo { color: #065f46; font-weight: 700; }
 
 /* ---- Section divider ---- */
 .segment-section {
@@ -268,8 +277,8 @@ td.value-critical { color: #721c24; font-weight: bold; }
 /* ---- Ranking table ---- */
 .ranking-table .rank-num {
     font-size: 14pt;
-    font-weight: bold;
-    color: #0f3460;
+    font-weight: 700;
+    color: #1a1a3e;
     text-align: center;
 }
 

@@ -144,11 +144,12 @@
         </tbody>
     </table>
 
-    <!-- Tabla de negocio por decil -->
+    <!-- Tabla de negocio por bin de score (ancho fijo) -->
     {% if seg.business_table %}
-    <h2>Métricas de Negocio por Decil</h2>
+    <h2>Métricas de negocio por bin de score (ancho fijo)</h2>
     <p style="font-size:9pt; color:#666; margin-bottom:0.2cm;">
         Score bajo = mayor riesgo. Las tasas de incumplimiento deben decrecer conforme sube el score.
+        Bins definidos en META_VARIABLES.binning_rules (ancho fijo, no percentiles).
     </p>
     <table>
         <thead>
@@ -175,6 +176,41 @@
             {% endfor %}
         </tbody>
     </table>
+    {% endif %}
+
+    <!-- Métricas de negocio por decil (deciles reales sobre fnpuntaje) -->
+    <h2>Métricas de negocio por decil</h2>
+    <p style="font-size:9pt; color:#666; margin-bottom:0.2cm;">
+        Deciles construidos con qcut sobre el score real de la cohorte (cada decil
+        ≈ 10% de la población). Decil 1 = scores más bajos = mayor riesgo:
+        la línea de tasa debe decrecer con decil creciente.
+    </p>
+
+    {% set cons = seg.decile_charts.get('consolidated', {}) %}
+    <h3>Consolidada (cohorte del target primario)</h3>
+    {% if cons.available and cons.img_b64 %}
+        <img class="decile-chart" src="data:image/png;base64,{{ cons.img_b64 }}"
+             alt="Deciles consolidados — segmento {{ seg.segment_id }}" />
+        {% if cons.missing_targets %}
+        <p class="decile-note">
+            Targets omitidos por insuficiente maduración: {{ cons.missing_targets | join(', ') }}.
+        </p>
+        {% endif %}
+    {% else %}
+        <p class="decile-placeholder">
+            Gráfica no disponible: {{ cons.reason or 'datos insuficientes' }}.
+        </p>
+    {% endif %}
+
+    {% set pt = seg.decile_charts.get('per_target', {}) %}
+    <h3>Por target (cada cohorte por separado)</h3>
+    {% if pt.available and pt.img_b64 %}
+        <img class="decile-chart" src="data:image/png;base64,{{ pt.img_b64 }}"
+             alt="Deciles por target — segmento {{ seg.segment_id }}" />
+    {% else %}
+        <p class="decile-placeholder">
+            Gráfica no disponible: {{ pt.reason or 'sin cohortes maduras' }}.
+        </p>
     {% endif %}
 
     <!-- Acciones recomendadas -->

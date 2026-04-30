@@ -441,9 +441,9 @@ class IncrementalETL:
         - La madurez se garantiza por el filtro: no se calcula _semanas_vida
         """
         df = weekly_df.copy()
-        df = df[(df["flg_baz_boost"] == 1) & (df["flg_surtida"] == 1)].copy()
+        df = df[df["flg_surtida"] == 1].copy()
         if df.empty:
-            logger.warning("Flow B: no BazBoost disbursed records")
+            logger.warning("Flow B: no disbursed records")
             return {"performance_binned_rows": 0, "performance_individual_rows": 0}
 
 

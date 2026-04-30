@@ -32,6 +32,14 @@ class SegmentMetrics:
     business_table: list[dict]    # lista de deciles con tasas b_malo por score bin
     thresholds: dict = field(default_factory=dict)  # {metric_base_name: {warn, crit, direction}}
     variable_descriptions: dict = field(default_factory=dict)  # {variable_name: short_description}
+    decile_charts: dict = field(default_factory=dict)
+    # decile_charts:
+    # {
+    #   "consolidated": {"img_b64": str|None, "available": bool, "reason": str|None,
+    #                    "cohort_week": str (iso), "missing_targets": list[str]},
+    #   "per_target":   {"img_b64": str|None, "available": bool, "reason": str|None,
+    #                    "targets": list[{"name": str, "available": bool, "cohort_week": str}]},
+    # }
 
 
 @dataclass

@@ -23,6 +23,11 @@ from mlmonitor.db.models import (
     MetaVariables,
 )
 from mlmonitor.metrics.business_metrics import get_business_metrics_table
+from mlmonitor.metrics.decile_metrics import get_decile_data_for_segment
+from mlmonitor.report.charts import (
+    render_consolidated_decile_chart,
+    render_per_target_decile_chart,
+)
 
 STATUS_ORDER = {"CRITICAL": 0, "WARNING": 1, "OK": 2}
 _LABEL_TO_FLAG = {"OK": 0, "WARNING": 1, "CRITICAL": 2}
@@ -147,6 +152,16 @@ class ReportBuilder:
                     "direction": r.direction or "higher_worse",
                 }
 
+        # Resolver primary_target ANTES del loop para poder pasarlo a cada segmento.
+        active_target_names = {tv.variable_name for tv in all_targets}
+        if PRIMARY_TARGET in active_target_names:
+            resolved_primary_target = PRIMARY_TARGET
+        elif active_target_names:
+            mid_idx = len(performance_coverage) // 2
+            resolved_primary_target = performance_coverage[mid_idx]["target"]
+        else:
+            resolved_primary_target = PRIMARY_TARGET
+
         # Construir SegmentMetrics por segmento
         segments = []
         for reg in model_regs:
@@ -178,6 +193,7 @@ class ReportBuilder:
                 thresholds=thresholds_by_segment.get(reg.id, {}),
                 calculation_week=calculation_week,
                 performance_week=performance_week,
+                primary_target=resolved_primary_target,
             )
             segments.append(seg_metrics)
 
@@ -191,15 +207,6 @@ class ReportBuilder:
             "warning": sum(1 for s in segments if s.overall_status == "WARNING"),
             "critical": sum(1 for s in segments if s.overall_status == "CRITICAL"),
         }
-
-        active_target_names = {tv.variable_name for tv in all_targets}
-        if PRIMARY_TARGET in active_target_names:
-            resolved_primary_target = PRIMARY_TARGET
-        elif active_target_names:
-            mid_idx = len(performance_coverage) // 2
-            resolved_primary_target = performance_coverage[mid_idx]["target"]
-        else:
-            resolved_primary_target = PRIMARY_TARGET
 
         context = AnalysisContext(
             model_id=model_id,
@@ -234,6 +241,7 @@ class ReportBuilder:
         thresholds: dict[str, dict],
         calculation_week: date,
         performance_week: date,
+        primary_target: str,
     ) -> SegmentMetrics:
         """Construye SegmentMetrics desde FACT_METRICS_HISTORY."""
         metrics_rows = (
@@ -347,6 +355,15 @@ class ReportBuilder:
                 .to_dict(orient="records")
             )
 
+        # Gráficas de deciles reales (qcut) — consolidada + por target.
+        decile_charts = self._build_decile_charts(
+            model_registry_id=model_registry_id,
+            segment_id=segment_id,
+            target_vars=target_vars,
+            calculation_week=calculation_week,
+            primary_target=primary_target,
+        )
+
         return SegmentMetrics(
             segment_id=segment_id,
             segment_description=segment_description,
@@ -361,4 +378,73 @@ class ReportBuilder:
             business_table=business_table,
             thresholds=thresholds,
             variable_descriptions=variable_descriptions,
+            decile_charts=decile_charts,
         )
+
+    def _build_decile_charts(
+        self,
+        model_registry_id: int,
+        segment_id: str,
+        target_vars: list,
+        calculation_week: date,
+        primary_target: str,
+    ) -> dict:
+        """Genera las dos gráficas de deciles (consolidada + por target) en base64."""
+        primary = next(
+            (t for t in target_vars if t.variable_name == primary_target),
+            None,
+        )
+        if primary is not None:
+            primary_lag = primary.lag_semanas or 0
+        elif target_vars:
+            primary_lag = target_vars[0].lag_semanas or 0
+        else:
+            primary_lag = 0
+
+        decile_data = get_decile_data_for_segment(
+            session=self.session,
+            model_registry_id=model_registry_id,
+            calculation_week=calculation_week,
+            primary_target_lag=primary_lag,
+            all_targets=target_vars,
+        )
+
+        cons = decile_data["consolidated"]
+        consolidated_payload = {
+            "available": cons["available"],
+            "img_b64": None,
+            "reason": None if cons["available"] else "Sin datos suficientes en la cohorte primaria",
+            "cohort_week": cons["cohort_week"].isoformat(),
+            "missing_targets": cons["missing_targets"],
+        }
+        if cons["available"]:
+            consolidated_payload["img_b64"] = render_consolidated_decile_chart(
+                decile_table=cons["decile_table"],
+                rates_by_target=cons["rates_by_target"],
+                cohort_week=cons["cohort_week"],
+                primary_target=primary_target,
+                segment_id=segment_id,
+            )
+
+        pt_data = decile_data["per_target"]
+        pt_available = any(p["available"] for p in pt_data.values())
+        pt_payload = {
+            "available": pt_available,
+            "img_b64": None,
+            "reason": None if pt_available else "Ningún target tiene cohorte madura disponible",
+            "targets": [
+                {
+                    "name": t,
+                    "available": p["available"],
+                    "cohort_week": p["cohort_week"].isoformat(),
+                }
+                for t, p in pt_data.items()
+            ],
+        }
+        if pt_available:
+            pt_payload["img_b64"] = render_per_target_decile_chart(
+                per_target=pt_data,
+                segment_id=segment_id,
+            )
+
+        return {"consolidated": consolidated_payload, "per_target": pt_payload}

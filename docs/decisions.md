@@ -418,3 +418,44 @@ La implementación de esta decisión está en §8.2.18.
 - Aprobación explícita del usuario.
 - Redacción del script `scripts/migrate_targets_2026_04_29.py`.
 - Ejecución manual (no automatizada) sobre RDS.
+
+
+## §8.2.26 Gráficas de deciles reales en el PDF (matplotlib + base64 inline)
+
+**Fecha:** 2026-04-30 · **Estado:** Aceptado · **Supersede:** —
+
+**Contexto.** La sección `<h2>Métricas de Negocio por Decil</h2>` en `report/templates/submodel_section.html` mostraba en realidad **bines de ancho fijo de 100 puntos** (`0-100`, `100-200`, ..., `900-1000`) definidos en `data/bootstrap.py::SCORE_BINS` y persistidos en `META_VARIABLES.binning_rules`. El nombre era engañoso: los bines fijos no son percentiles y no garantizan 10% de población por bin (segmentos con score concentrado pueden tener bines vacíos o sobre-poblados). Para auditoría y comparación entre cohortes/targets se requería una visualización con **deciles reales** (qcut sobre `fnpuntaje` continuo) más una representación gráfica que la tabla de números actual no comunica de forma directa.
+
+**Decisión.**
+1. **Renombrar** la sección actual a `Métricas de negocio por bin de score (ancho fijo)` para reflejar fielmente su semántica.
+2. **Agregar una nueva sección** `Métricas de negocio por decil` debajo, con dos gráficas matplotlib **por segmento**:
+   - **Consolidada:** una figura con barras de igual altura (10% de población por decil) y N líneas de tasa de impago superpuestas, una por cada target activo cuyo `lag_semanas <= primary.lag_semanas`. La cohorte usada es la del target primario (`calculation_week - primary.lag`). Targets con lag mayor se omiten silenciosamente y se listan en una nota inferior porque sobre esa cohorte aún no son observables.
+   - **Por target (subplots):** una figura con N paneles horizontales, uno por cada target activo, cada uno con su **propia cohorte madura** (`calculation_week - target.lag`). Si una cohorte no tiene datos o `n < DECILE_MIN_OBS = 100`, el panel muestra un placeholder en gris.
+3. **Decil 1 = scores más bajos** (mayor riesgo). NO se invierte el score (a diferencia de Gini/KS en `metrics/performance.py:179`); el eje X habla por sí solo y la línea de tasa debe verse decreciente con decil creciente.
+4. **Embedding:** matplotlib backend `Agg` (headless, ECS-compatible) → buffer PNG @ 150 dpi → base64 → `<img src="data:image/png;base64,...">` inline en el HTML. Sin archivos intermedios.
+5. **Schema de transporte:** nuevo campo `decile_charts: dict` en `SegmentMetrics` (`analyst/base.py`) con keys `consolidated` y `per_target`, cada una con `{img_b64, available, reason, cohort_week, ...}`. El `img_b64` se almacena **sin** el prefijo `data:image/png;base64,` — el template lo concatena. Esto facilita tests (`base64.b64decode` directo) y mantiene el dato puro.
+6. **Módulos nuevos:**
+   - `metrics/decile_metrics.py`: `compute_decile_table(scores, flags)` con `pd.qcut(..., duplicates="drop")` y `get_decile_data_for_segment(...)` que carga `FACT_PERFORMANCE_INDIVIDUAL` por target y arma los dos payloads. Para la consolidada hace `merge` por `credito_id` para garantizar que los deciles definidos sobre la cohorte primaria se aplican consistentemente al flag de cada target elegible.
+   - `report/charts.py`: `render_consolidated_decile_chart(...)` y `render_per_target_decile_chart(...)`. Paleta consistente con `styles.css` (`#1a1a3e`, `#06b6d4`, `#8b5cf6`, `#ef4444`).
+7. **Builder:** la resolución de `resolved_primary_target` se movió **antes** del loop de segmentos (antes se calculaba después) para poder pasarla a `_build_segment_metrics`. La generación de gráficas se delega en `_build_decile_charts` que se llama tras `business_table`.
+
+**Razones.**
+- **Deciles reales > bines fijos** para análisis de discriminación: cada decil aporta el mismo peso poblacional y permite comparar cohortes/targets de forma calibrada. Los bines fijos siguen siendo útiles como vista compatible con el scorecard original (rangos de score interpretables por negocio), por eso ambos coexisten.
+- **Cohorte primaria para la consolidada (no por target):** permite contrastar varios targets sobre la misma población — la pregunta operativa es "¿cómo se comporta esta cohorte en sus distintas ventanas observables?", no "¿cómo se ve cada cohorte por separado?" (eso es la gráfica B).
+- **Regla `lag <= primary.lag` en la consolidada:** sobre la cohorte de hace `primary.lag` semanas solo son observables los targets cuya maduración cabe en ese tiempo. Incluir b_malo14_26 con lag 26 cuando primary es b_malo8_13 (lag 13) requeriría una cohorte de hace 26 semanas — distinta de la primaria — y rompería la unicidad de la población por decil. Los targets omitidos se anuncian explícitamente al lector.
+- **Base64 inline vs archivos:** ECS Fargate no tiene `/tmp` persistente y weasyprint admite data URIs nativo. Coste: PDF ~10× más pesado (1.87 MB vs ~150 KB para 22 PNGs), aceptable. Evita gestión de paths relativos y limpieza de artefactos intermedios.
+- **No invertir score para deciles:** Gini/KS invierten en `_build_performance_df_individual` para que el ranking quede ascending-by-risk (convención de scoring). En deciles, el eje X ya identifica decil 1 = riesgo alto; invertir confundiría al lector que conoce el rango natural del score [0, score_max]. Trade-off: la línea de tasa decrece (lo opuesto a la curva ROC mental), pero el usuario lo pidió explícito y es la convención común en análisis crediticio (decil 1 = peor calidad).
+- **Una gráfica B por segmento (no global):** la calibración de cada submodelo (s1..s11) es distinta — un decil global mezclaría poblaciones con scoring scales heterogéneos. La granularidad por segmento es coherente con el resto del PDF.
+
+**Alternativas descartadas.**
+- **Renombrar sin agregar gráfica:** dejaría el problema semántico resuelto pero no aportaría la visualización solicitada por el usuario. Descartada.
+- **Una sola gráfica (sólo consolidada o sólo per-target):** la consolidada permite comparar targets sobre una misma población; la per-target permite ver cada cohorte madura por separado. Cada una responde una pregunta distinta y son complementarias. El usuario aceptó el costo visual de tener ambas.
+- **SVG inline en lugar de PNG base64:** SVG es vectorial pero pesa más en HTML grandes y weasyprint tiene casos borde con SVG anidado; PNG @ 150 dpi es suficiente para A4.
+- **Guardar PNGs en `artifacts/reports/img/`:** requeriría gestión de paths relativos, limpieza tras render, y preocupaciones de concurrencia en ECS. Base64 los hace agnósticos al filesystem.
+- **Caching/reuso del DataFrame entre gráficas:** el costo medido es ≤3 s para 22 figuras en 11 segmentos. No vale la complejidad de un cache hasta que se demuestre cuello de botella.
+- **Configurar `DECILE_MIN_OBS` por segmento vía `META_METRIC_THRESHOLDS`:** prematuro. Hardcode a 100 cubre el caso actual; mover a tabla cuando un segmento legítimamente lo necesite.
+
+**Verificación.**
+- 75/75 tests pasan (suite previa 68/68 + `tests/test_decile_metrics.py` con 6 unit + 1 smoke PNG-signature).
+- Pipeline contra SQLite local (`DB_URL=sqlite:///mlmonitor_dev.db AWS_PROFILE=nonexistent_xyz S3_BUCKET= poetry run python scripts/run_pipeline.py --date 2026-02-02 --no-email --no-llm`) → PDF de 1.87 MB en `artifacts/reports/mlmonitor_2026-02-02.pdf` (vs ~150 KB previo, consistente con 22 PNGs nuevos).
+- Sección renombrada visible; nueva sección con consolidada (cohorte primaria) y per-target (subplots con cohortes propias) presente; nota de targets omitidos cuando aplica; placeholders cuando no hay cohorte madura.

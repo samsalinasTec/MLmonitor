@@ -296,3 +296,33 @@ td, th { word-break: break-word; }
     font-family: "DejaVu Sans Mono", monospace;
     font-size: 9pt;
 }
+
+/* ---- Decile charts ---- */
+img.decile-chart {
+    display: block;
+    max-width: 100%;
+    max-height: 9cm;
+    margin: 0.3cm 0 0.5cm 0;
+    border: 1px solid #dee2e6;
+    border-radius: 4px;
+    padding: 0.15cm;
+    background: white;
+    page-break-inside: avoid;
+}
+
+p.decile-note {
+    font-size: 8pt;
+    color: #6b7280;
+    margin: 0 0 0.3cm 0;
+    font-style: italic;
+}
+
+p.decile-placeholder {
+    font-size: 9pt;
+    color: #92400e;
+    background: #fef3c7;
+    border-left: 3px solid #f59e0b;
+    padding: 0.2cm 0.3cm;
+    border-radius: 0 3px 3px 0;
+    margin: 0.3cm 0;
+}

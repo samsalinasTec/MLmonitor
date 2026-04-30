@@ -6,6 +6,21 @@ Formato: encabezado por fecha ISO (`## YYYY-MM-DD`) + bullets cortos. Entradas m
 
 ---
 
+## 2026-04-30
+
+- **Gráficas de deciles reales en el PDF.** La sección "Métricas de Negocio por Decil" en `submodel_section.html` realmente mostraba bines fijos de ancho 100 (no percentiles). Se renombró a `Métricas de negocio por bin de score (ancho fijo)` y se agregó debajo una nueva sección `Métricas de negocio por decil` con dos gráficas matplotlib por segmento:
+  - **Consolidada:** cohorte del target primario (`calculation_week - primary.lag`); barras de igual altura (10% por decil) + N líneas de tasa de impago, una por cada target con `lag <= primary.lag` (los maduros sobre esa cohorte). Targets con lag mayor se omiten y se listan en una nota.
+  - **Por target (subplots):** un panel por target activo, cada uno con su propia cohorte madura. Si la cohorte no está disponible se muestra placeholder.
+- **Nuevos módulos:** `src/mlmonitor/metrics/decile_metrics.py` (`compute_decile_table` con `pd.qcut(..., duplicates="drop")` + `get_decile_data_for_segment` que carga `FACT_PERFORMANCE_INDIVIDUAL` y arma `consolidated`/`per_target`); `src/mlmonitor/report/charts.py` (matplotlib backend `Agg`, helpers `render_consolidated_decile_chart` y `render_per_target_decile_chart` que devuelven base64 PNG sin prefijo data URI — el template añade el prefijo).
+- **Builder:** `_build_segment_metrics` ahora recibe `primary_target` y delega en `_build_decile_charts` que se ejecuta tras `business_table`. El `resolved_primary_target` se movió antes del loop de segmentos (antes se calculaba después).
+- **`SegmentMetrics`** ganó campo `decile_charts: dict` con keys `consolidated` y `per_target` (cada uno con `img_b64`, `available`, `reason`, `cohort_week`).
+- **Estilos:** clases `img.decile-chart` (max-height 9 cm, `page-break-inside: avoid`), `p.decile-note`, `p.decile-placeholder` en `styles.css`.
+- **Tests:** `tests/test_decile_metrics.py` con 6 unit + 1 smoke (PNG signature). Suite total: 75/75 pasan (antes 68 + 7 nuevos).
+- **Verificación:** `DB_URL=sqlite:///mlmonitor_dev.db AWS_PROFILE=nonexistent_xyz S3_BUCKET= poetry run python scripts/run_pipeline.py --date 2026-02-02 --no-email --no-llm` → PDF de 1.87 MB en `artifacts/reports/mlmonitor_2026-02-02.pdf` (vs ~150 KB antes; consistente con 22 PNGs nuevos).
+- **Pendiente / siguiente:** proponer ADR §8.2.22 a `docs/decisions.md` describiendo el embedding base64, la convención de decil 1 = score bajo y la regla de inclusión de targets en la consolidada (`lag <= primary.lag`).
+
+---
+
 ## 2026-04-29
 
 - **Tres ajustes al reporte (PSI label, heatmap, rename).** Sesión iterativa post-screenshot del usuario:

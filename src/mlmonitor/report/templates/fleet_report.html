@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>MLMonitor — Reporte de Flota {{ context.model_id }}</title>
+    <title>MLMonitor — Reporte de Segmentos {{ context.model_id }}</title>
     <style>
         {% include "styles.css" %}
     </style>
@@ -17,8 +17,9 @@
 <!-- PORTADA -->
 <!-- ============================================================ -->
 <div class="cover-page">
-    <div class="cover-logo">MLMonitor</div>
-    <div class="cover-title">Reporte de Monitoreo<br>de Flota de Scorecards</div>
+    {% if logo_path %}<img src="{{ logo_path }}" class="cover-logo-img" alt="elektra">
+    {% else %}<div class="cover-logo">elektra</div>{% endif %}
+    <div class="cover-title">Reporte de Monitoreo<br>de Segmentos</div>
     <div class="cover-subtitle">Crédito — {{ context.model_name }}</div>
     <div class="cover-meta">
         <p><strong>Modelo:</strong> {{ context.model_id }}</p>
@@ -32,7 +33,7 @@
             <li><code>{{ cov.target }}</code>: hasta {{ cov.cutoff_date }} (lag {{ cov.lag }}s)</li>
         {% endfor %}
         </ul>
-        <p><strong>Sub-scorecards monitoreados:</strong> {{ context.fleet_summary.total }} de {{ context.total_submodels }}</p>
+        <p><strong>Segmentos monitoreados:</strong> {{ context.fleet_summary.total }} de {{ context.total_submodels }}</p>
     </div>
 </div>
 
@@ -63,7 +64,16 @@
 
 <!-- Tabla de estado de flota -->
 <h2>Estado por Segmento</h2>
-<table>
+<table class="fleet-status-table">
+    <colgroup>
+        <col style="width:7%">
+        <col style="width:19%">
+        <col style="width:11%">
+        <col style="width:28%">
+        <col style="width:10%">
+        <col style="width:10%">
+        <col style="width:7%">
+    </colgroup>
     <thead>
         <tr>
             <th>Segmento</th>
@@ -85,7 +95,7 @@
         <tr>
             <td><strong>{{ seg.segment_id }}</strong></td>
             <td>{{ seg.segment_description }}</td>
-            <td><span class="badge badge-{{ seg.overall_status | lower }}">{{ seg.overall_status }}</span></td>
+            <td><span class="badge badge-{{ seg.overall_status | lower }}">{{ status_es[seg.overall_status] }}</span></td>
             <td class="value-{{ 'ok' if seg.psi_max is none or seg.psi_max < (psi_th.warn or 0.10) else 'warning' if seg.psi_max < (psi_th.crit or 0.20) else 'critical' }}">
                 {% if seg.psi_max is not none %}{{ "%.3f" | format(seg.psi_max) }}{% if seg.psi_max_variable %}{% set psi_var_desc = seg.variable_descriptions.get(seg.psi_max_variable) %}{% if psi_var_desc %} {{ psi_var_desc }} <span style="font-size:8pt; color:#666;">({{ seg.psi_max_variable }})</span>{% else %} <span style="font-size:8pt; color:#666;">({{ seg.psi_max_variable }})</span>{% endif %}{% endif %}{% else %}—{% endif %}
             </td>
@@ -103,8 +113,10 @@
 
 <!-- Narrativa LLM de flota -->
 {% if fleet_narrative %}
-<h2>Análisis Ejecutivo</h2>
-<div class="narrative-box">{{ fleet_narrative | nl2br }}</div>
+<div class="narrative-box">
+    <div class="narrative-title">Resumen Ejecutivo</div>
+    {{ fleet_narrative | nl2br }}
+</div>
 {% endif %}
 
 <!-- ============================================================ -->
@@ -122,7 +134,7 @@
 <div class="segment-section">
     <h1>Ranking de Urgencia — Todos los Segmentos</h1>
     <p style="font-size:9pt; color:#666; margin-bottom:0.4cm;">
-        Ordenado por nivel de urgencia: CRÍTICO → WARNING → OK.
+        Ordenado por nivel de urgencia: CRÍTICO → ADVERTENCIA → OK.
         Los valores de performance (Gini, KS, Tasa de Incumplimiento) tienen lag estructural de {{ context.performance_coverage[0].lag }} a {{ context.performance_coverage[-1].lag }} semanas según el target.
     </p>
     <table class="ranking-table">
@@ -146,7 +158,7 @@
             <tr>
                 <td class="rank-num">{{ loop.index }}</td>
                 <td><strong>{{ seg.segment_id }}</strong> — {{ seg.segment_description }}</td>
-                <td><span class="badge badge-{{ seg.overall_status | lower }}">{{ seg.overall_status }}</span></td>
+                <td><span class="badge badge-{{ seg.overall_status | lower }}">{{ status_es[seg.overall_status] }}</span></td>
                 <td>{{ seg.active_alerts | length }}</td>
                 <td>{% if seg.psi_max is not none %}{{ "%.3f" | format(seg.psi_max) }}{% if seg.psi_max_variable %}{% set psi_var_desc = seg.variable_descriptions.get(seg.psi_max_variable) %}{% if psi_var_desc %} {{ psi_var_desc }} <span style="font-size:8pt; color:#666;">({{ seg.psi_max_variable }})</span>{% else %} <span style="font-size:8pt; color:#666;">({{ seg.psi_max_variable }})</span>{% endif %}{% endif %}{% else %}—{% endif %}</td>
                 <td>{% if fpd_gini is not none %}{{ "%.3f" | format(fpd_gini) }}{% else %}—{% endif %}</td>

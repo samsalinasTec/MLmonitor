@@ -18,10 +18,22 @@ import numpy as np
 import pandas as pd
 from sqlalchemy.orm import Session
 
-from mlmonitor.db.models import FactPerformanceIndividual, MetaVariables
+from mlmonitor.db.models import FactDecilesHistory, FactPerformanceIndividual, MetaVariables
 
 N_DECILES = 10
 DECILE_MIN_OBS = 100
+DECILE_WINDOW_WEEKS = 4  # análogo a PSI_WINDOW_WEEKS; ver psi.py
+
+
+def _window_weeks(cohort_end: date, window: int = DECILE_WINDOW_WEEKS) -> list[date]:
+    """Lista de lunes ISO en la ventana, desde cohort_end hacia atrás.
+
+    Para deciles, cohort_end = calculation_week - target_lag (semana donde
+    los créditos cumplen exactamente la madurez del target). Las semanas
+    anteriores tienen créditos MÁS maduros, por lo que sus outcomes también
+    son confiables. Replica la lógica de psi.py::_window_weeks.
+    """
+    return [cohort_end - timedelta(weeks=i) for i in range(window)]
 
 
 def compute_decile_table(
@@ -109,6 +121,7 @@ def get_decile_data_for_segment(
         }
     """
     primary_cohort = calculation_week - timedelta(weeks=primary_target_lag)
+    primary_window = _window_weeks(primary_cohort)
 
     eligible_targets = [
         t for t in all_targets
@@ -121,6 +134,8 @@ def get_decile_data_for_segment(
 
     consolidated: dict = {
         "cohort_week": primary_cohort,
+        "cohort_window_start": primary_window[-1],
+        "cohort_window_end": primary_cohort,
         "decile_table": None,
         "rates_by_target": {},
         "missing_targets": missing_targets,
@@ -133,7 +148,7 @@ def get_decile_data_for_segment(
             session.query(FactPerformanceIndividual)
             .filter(
                 FactPerformanceIndividual.model_registry_id == model_registry_id,
-                FactPerformanceIndividual.origination_week == primary_cohort,
+                FactPerformanceIndividual.origination_week.in_(primary_window),
                 FactPerformanceIndividual.ventana == t.variable_name,
             )
             .all()
@@ -188,11 +203,12 @@ def get_decile_data_for_segment(
     per_target: dict[str, dict] = {}
     for t in all_targets:
         cohort = calculation_week - timedelta(weeks=t.lag_semanas or 0)
+        window = _window_weeks(cohort)
         rows = (
             session.query(FactPerformanceIndividual)
             .filter(
                 FactPerformanceIndividual.model_registry_id == model_registry_id,
-                FactPerformanceIndividual.origination_week == cohort,
+                FactPerformanceIndividual.origination_week.in_(window),
                 FactPerformanceIndividual.ventana == t.variable_name,
             )
             .all()
@@ -200,6 +216,8 @@ def get_decile_data_for_segment(
         if not rows:
             per_target[t.variable_name] = {
                 "cohort_week": cohort,
+                "cohort_window_start": window[-1],
+                "cohort_window_end": cohort,
                 "decile_table": None,
                 "available": False,
                 "reason": "Cohorte sin datos",
@@ -210,6 +228,8 @@ def get_decile_data_for_segment(
         if len(df.dropna(subset=["score"])) < min_obs:
             per_target[t.variable_name] = {
                 "cohort_week": cohort,
+                "cohort_window_start": window[-1],
+                "cohort_window_end": cohort,
                 "decile_table": None,
                 "available": False,
                 "reason": f"n={len(df)} < {min_obs}",
@@ -219,9 +239,81 @@ def get_decile_data_for_segment(
         table = compute_decile_table(df["score"], df["flag"])
         per_target[t.variable_name] = {
             "cohort_week": cohort,
+            "cohort_window_start": window[-1],
+            "cohort_window_end": cohort,
             "decile_table": table,
             "available": not table.empty,
             "reason": None if not table.empty else "qcut vacío",
         }
 
     return {"consolidated": consolidated, "per_target": per_target}
+
+
+def persist_deciles_history(
+    session: Session,
+    model_registry_id: int,
+    calculation_week: date,
+    decile_data: dict,
+) -> int:
+    """Persiste deciles per-target en FACT_DECILES_HISTORY (idempotente).
+
+    Usa el bloque per_target del output de get_decile_data_for_segment.
+    El bloque consolidated NO se persiste como tal (es derivado: cada target
+    tiene su propia tabla individual + rates_by_target se reconstruye desde
+    los individuales si se necesita).
+
+    Idempotencia: la unique constraint
+    (model_registry_id, calculation_week, target_variable, decile)
+    rechaza inserts duplicados; pre-borramos antes de insertar para permitir
+    re-runs con datos actualizados.
+    """
+    pt_data = decile_data.get("per_target", {})
+    if not pt_data:
+        return 0
+
+    targets_with_data = [
+        tname for tname, p in pt_data.items()
+        if p.get("available") and p.get("decile_table") is not None
+        and not p["decile_table"].empty
+    ]
+    if not targets_with_data:
+        return 0
+
+    # Idempotencia: borrar filas previas de esta combinación antes de insertar.
+    (
+        session.query(FactDecilesHistory)
+        .filter(
+            FactDecilesHistory.model_registry_id == model_registry_id,
+            FactDecilesHistory.calculation_week == calculation_week,
+            FactDecilesHistory.target_variable.in_(targets_with_data),
+        )
+        .delete(synchronize_session=False)
+    )
+
+    rows: list[FactDecilesHistory] = []
+    for tname in targets_with_data:
+        p = pt_data[tname]
+        table = p["decile_table"]
+        win_start = p["cohort_window_start"]
+        win_end = p["cohort_window_end"]
+        for _, r in table.iterrows():
+            rows.append(FactDecilesHistory(
+                model_registry_id=model_registry_id,
+                calculation_week=calculation_week,
+                target_variable=tname,
+                cohort_window_start=win_start,
+                cohort_window_end=win_end,
+                decile=int(r["decile"]),
+                score_min=float(r["score_min"]),
+                score_max=float(r["score_max"]),
+                score_mean=float(r["score_mean"]),
+                n_obs=int(r["n_total"]),
+                n_events=int(r["n_event"]),
+                event_rate=float(r["event_rate"]),
+                pct_population=float(r["pct_population"]) if pd.notna(r["pct_population"]) else None,
+            ))
+
+    if rows:
+        session.add_all(rows)
+        session.flush()
+    return len(rows)

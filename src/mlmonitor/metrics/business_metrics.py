@@ -99,8 +99,8 @@ def get_business_metrics_table(
     df = pd.DataFrame(data).sort_values("score_midpoint").reset_index(drop=True)
 
     # Heatmap: por cada columna {target}_rate, calcular {target}_color con
-    # gradiente rojo (rgba) normalizado al min/max de la columna. Tasas más
-    # altas = celda más roja (mayor riesgo). Texto legible: alpha en [0.05, 0.85].
+    # gradiente azul slate (rgba) normalizado al min/max de la columna. Color
+    # neutral — solo comunica concentración, sin valencia bueno/malo.
     for tname in target_names:
         rate_col = f"{tname}_rate"
         color_col = f"{tname}_color"
@@ -121,7 +121,7 @@ def get_business_metrics_table(
                 continue
             norm = (v - v_min) / rng
             alpha = 0.05 + norm * 0.80
-            colors.append(f"rgba(239, 68, 68, {alpha:.3f})")
+            colors.append(f"rgba(71, 85, 105, {alpha:.3f})")
         df[color_col] = colors
 
     return df

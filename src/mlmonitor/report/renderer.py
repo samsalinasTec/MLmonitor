@@ -9,8 +9,10 @@ from jinja2 import Environment, FileSystemLoader, select_autoescape
 from markupsafe import Markup, escape
 
 from mlmonitor.analyst.base import AnalysisContext, AnalysisResult
+from mlmonitor.report.builder import STATUS_DISPLAY_ES
 
 TEMPLATES_DIR = Path(__file__).parent / "templates"
+LOGO_PATH = Path("artifacts/images/elektra-logo.png")
 
 
 def _nl2br(value: str) -> Markup:
@@ -33,6 +35,7 @@ class PDFRenderer:
             autoescape=select_autoescape(["html"]),
         )
         self.jinja_env.filters["nl2br"] = _nl2br
+        self.jinja_env.globals["status_es"] = STATUS_DISPLAY_ES
 
     def render_html(
         self,
@@ -50,12 +53,18 @@ class PDFRenderer:
         segment_narratives = result.segment_narratives if result else {}
         recommended_actions = result.recommended_actions if result else {}
 
+        # Resolver logo Elektra a URI absoluto para weasyprint.
+        # Si no existe, el template usa el fallback de texto.
+        logo_resolved = LOGO_PATH.resolve()
+        logo_uri = logo_resolved.as_uri() if logo_resolved.exists() else None
+
         html = template.render(
             context=context,
             fleet_narrative=fleet_narrative,
             segment_narratives=segment_narratives,
             recommended_actions=recommended_actions,
             generation_date=generation_date.isoformat(),
+            logo_path=logo_uri,
         )
         return html
 

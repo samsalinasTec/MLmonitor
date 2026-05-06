@@ -7,12 +7,19 @@ Verifica que:
 - s1 (distribución estable) → PSI ≈ 0
 - s2 (distribución drifteada) → PSI CRITICAL > 0.20
 - null_rate de s2 en semana actual > umbral CRITICAL
+- La ventana rodante de 4 semanas suaviza ruido y se degrada con cobertura parcial
 """
+
+from datetime import timedelta
 
 import pandas as pd
 import pytest
 
+from mlmonitor.db.models import FactDistributions
 from mlmonitor.metrics.psi import (
+    PSI_WINDOW_WEEKS,
+    _aggregate_distributions_over_window,
+    _window_weeks,
     compute_psi_from_df,
     get_max_psi,
     get_null_rates,
@@ -187,3 +194,168 @@ class TestPSIFromDB:
             assert null_rates["num_var"] == 0.0, (
                 f"s1 no debe tener nulls, obtenido: {null_rates['num_var']:.2%}"
             )
+
+
+# ---------------------------------------------------------------------------
+# Rolling-window tests — ventana de 4 semanas (current + 3 previas)
+# ---------------------------------------------------------------------------
+
+
+def _bins(probs, total=1000):
+    return [(f"bin_{i+1}", int(p * total)) for i, p in enumerate(probs)]
+
+
+def _seed_week(session, reg_id, var_id, week, probs, null_count=0, total=1000):
+    """Inserta una semana de FactDistributions para una variable dada."""
+    rows = []
+    for i, (label, count) in enumerate(_bins(probs, total)):
+        rows.append(FactDistributions(
+            model_registry_id=reg_id, variable_id=var_id,
+            origination_week=week,
+            bin_label=label, bin_count=count,
+            bin_percentage=count / total,
+            null_count=null_count if i == 0 else 0,
+            total_records=total,
+        ))
+    session.add_all(rows)
+    session.flush()
+
+
+class TestRollingWindow:
+    def test_window_helper_returns_descending_mondays(self, current_week):
+        weeks = _window_weeks(current_week, PSI_WINDOW_WEEKS)
+        assert len(weeks) == PSI_WINDOW_WEEKS
+        assert weeks[0] == current_week
+        assert weeks[-1] == current_week - timedelta(weeks=PSI_WINDOW_WEEKS - 1)
+        # Descendente y separadas exactamente una semana
+        for a, b in zip(weeks, weeks[1:]):
+            assert (a - b).days == 7
+
+    def test_partial_coverage_falls_back_to_existing_weeks(
+        self, session, segment_ids, variable_ids, current_week
+    ):
+        """Con solo current_week en DB (caso de la fixture), el resultado debe
+        coincidir con el PSI single-week histórico."""
+        reg_id = segment_ids["s2"]
+        var_id = variable_ids["s2"]["num_var"]
+        psi = get_psi_for_variable(session, reg_id, var_id, current_week)
+        # s2 tiene drift fuerte y solo una semana cargada → PSI > 0.20
+        assert psi > 0.20
+
+    def test_full_window_smooths_single_week_spike(
+        self, session, segment_ids, variable_ids, current_week
+    ):
+        """Inyectar 3 semanas previas estables + spike en current_week debe
+        producir un PSI estrictamente menor al PSI single-week (suavizado)."""
+        reg_id = segment_ids["s1"]
+        var_id = variable_ids["s1"]["num_var"]
+
+        # PSI single-week con la fixture (s1 estable) — baseline para comparar
+        psi_stable_only = get_psi_for_variable(session, reg_id, var_id, current_week)
+
+        # Sembrar 3 semanas previas también estables (mismo perfil que s1)
+        stable_probs = [0.20, 0.20, 0.20, 0.20, 0.20]
+        for i in range(1, PSI_WINDOW_WEEKS):
+            _seed_week(
+                session, reg_id, var_id,
+                current_week - timedelta(weeks=i),
+                stable_probs,
+            )
+
+        psi_full_window = get_psi_for_variable(session, reg_id, var_id, current_week)
+        # Con todas las semanas estables, sigue ≈ 0
+        assert psi_full_window < 0.10
+        # Y no debería ser mayor que el caso single-week estable
+        assert psi_full_window <= psi_stable_only + 1e-6
+
+    def test_drift_spike_attenuated_by_stable_history(
+        self, session, segment_ids, variable_ids, current_week
+    ):
+        """Si s2 (drift fuerte en current_week) tuviera 3 semanas previas
+        estables, el PSI rodante debe ser menor que el PSI sobre solo
+        current_week. Demuestra la propiedad de suavizado."""
+        reg_id = segment_ids["s2"]
+        var_id = variable_ids["s2"]["num_var"]
+
+        # PSI con solo current_week (drift puro, lo que hay en la fixture)
+        psi_spike_only = get_psi_for_variable(
+            session, reg_id, var_id, current_week, window_weeks=1,
+        )
+
+        # Sembrar 3 semanas previas estables (mismo perfil que el baseline de s2)
+        stable_probs = [0.20, 0.20, 0.20, 0.20, 0.20]
+        for i in range(1, PSI_WINDOW_WEEKS):
+            _seed_week(
+                session, reg_id, var_id,
+                current_week - timedelta(weeks=i),
+                stable_probs,
+            )
+
+        psi_with_history = get_psi_for_variable(
+            session, reg_id, var_id, current_week, window_weeks=PSI_WINDOW_WEEKS,
+        )
+
+        assert psi_with_history < psi_spike_only, (
+            f"Ventana rodante debe atenuar el spike: "
+            f"single-week={psi_spike_only:.4f}, rolling={psi_with_history:.4f}"
+        )
+
+    def test_aggregation_sums_bin_counts(
+        self, session, segment_ids, variable_ids, current_week
+    ):
+        """El helper de agregación devuelve porcentajes que suman 1 y refleja
+        la suma de bin_counts, no un promedio de porcentajes."""
+        reg_id = segment_ids["s1"]
+        var_id = variable_ids["s1"]["num_var"]
+
+        # Sembrar 1 semana previa con un total muy distinto (peso debe importar)
+        previous_probs = [0.60, 0.10, 0.10, 0.10, 0.10]
+        _seed_week(
+            session, reg_id, var_id,
+            current_week - timedelta(weeks=1),
+            previous_probs, total=4000,  # 4× peso vs current
+        )
+
+        df = _aggregate_distributions_over_window(
+            session, reg_id, var_id, current_week, window_weeks=2,
+        )
+        assert not df.empty
+        assert abs(df["bin_percentage"].sum() - 1.0) < 1e-9
+        # Con 4000 registros previos en bin_1 al 60% (=2400) y 1000 actuales
+        # estables al 20% en bin_1 (=200), bin_1 debe tener (2400+200)/5000 = 0.52
+        bin1 = df[df["bin_label"] == "bin_1"]["bin_percentage"].iloc[0]
+        assert abs(bin1 - 0.52) < 1e-6
+
+    def test_null_rate_uses_rolling_window(
+        self, session, segment_ids, variable_ids, current_week
+    ):
+        """null_rate agrega null_count y total_records sobre la ventana."""
+        reg_id = segment_ids["s2"]
+        var_map = {
+            vid: vname
+            for vname, vid in variable_ids["s2"].items()
+            if vname in ("num_var", "cat_var")
+        }
+        var_id = variable_ids["s2"]["num_var"]
+
+        # Fixture: current_week tiene null_count=200 / total=1000 → 20%
+        null_only_current = get_null_rates(
+            session, reg_id, var_map, current_week, window_weeks=1,
+        )["num_var"]
+        assert abs(null_only_current - 0.20) < 1e-6
+
+        # Sembrar 3 semanas previas SIN nulls, mismo total
+        stable_probs = [0.20, 0.20, 0.20, 0.20, 0.20]
+        for i in range(1, PSI_WINDOW_WEEKS):
+            _seed_week(
+                session, reg_id, var_id,
+                current_week - timedelta(weeks=i),
+                stable_probs, null_count=0, total=1000,
+            )
+
+        # Esperado: 200 nulls / (1000 × 4) = 0.05
+        rolling = get_null_rates(
+            session, reg_id, var_map, current_week, window_weeks=PSI_WINDOW_WEEKS,
+        )["num_var"]
+        assert abs(rolling - 0.05) < 1e-6
+        assert rolling < null_only_current

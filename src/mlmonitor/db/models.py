@@ -243,6 +243,39 @@ class FactPerformanceIndividual(Base):
     loaded_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
 
+class FactDecilesHistory(Base):
+    """Tabla decil por (modelo, semana de cálculo, target). Solo append.
+
+    Se calcula sobre ventana rodante de 4 semanas hacia atrás desde
+    cohort_window_end (= calculation_week - lag del target). Análogo a
+    PSI con ventana rodante (ver psi.py::PSI_WINDOW_WEEKS).
+    """
+
+    __tablename__ = "FACT_DECILES_HISTORY"
+    __table_args__ = (
+        UniqueConstraint(
+            "model_registry_id", "calculation_week", "target_variable", "decile",
+            name="uq_fact_deciles_history",
+        ),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    model_registry_id = Column(Integer, ForeignKey("META_MODEL_REGISTRY.id"), nullable=False, index=True)
+    calculation_week = Column(Date, nullable=False, index=True)
+    target_variable = Column(String(50), nullable=False)
+    cohort_window_start = Column(Date, nullable=False)  # cohort_end - (window_weeks - 1)
+    cohort_window_end = Column(Date, nullable=False)    # = calculation_week - lag
+    decile = Column(Integer, nullable=False)
+    score_min = Column(Float, nullable=False)
+    score_max = Column(Float, nullable=False)
+    score_mean = Column(Float, nullable=False)
+    n_obs = Column(Integer, nullable=False)
+    n_events = Column(Integer, nullable=False)
+    event_rate = Column(Float, nullable=False)
+    pct_population = Column(Float)
+    calculated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+
 class FactMetricsHistory(Base):
     """Historial de métricas calculadas. Solo append."""
 

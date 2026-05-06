@@ -459,3 +459,117 @@ La implementación de esta decisión está en §8.2.18.
 - 75/75 tests pasan (suite previa 68/68 + `tests/test_decile_metrics.py` con 6 unit + 1 smoke PNG-signature).
 - Pipeline contra SQLite local (`DB_URL=sqlite:///mlmonitor_dev.db AWS_PROFILE=nonexistent_xyz S3_BUCKET= poetry run python scripts/run_pipeline.py --date 2026-02-02 --no-email --no-llm`) → PDF de 1.87 MB en `artifacts/reports/mlmonitor_2026-02-02.pdf` (vs ~150 KB previo, consistente con 22 PNGs nuevos).
 - Sección renombrada visible; nueva sección con consolidada (cohorte primaria) y per-target (subplots con cohortes propias) presente; nota de targets omitidos cuando aplica; placeholders cuando no hay cohorte madura.
+
+
+## §8.2.27 PSI y null_rate con ventana rodante de 4 semanas
+
+**Fecha:** 2026-05-04 · **Estado:** Aceptado · **Supersede:** —
+
+**Contexto.** El cálculo original de `metrics/psi.py` comparaba la distribución de **una sola semana** de producción (`FACT_DISTRIBUTIONS WHERE origination_week = current_week`) contra el baseline de entrenamiento. Una sola semana tiene varianza alta por efectos de calendario (puentes, quincenas, eventos comerciales), por volumen bajo en algunos segmentos, y por ruido idiosincrático del scoring batch. Eso producía oscilaciones de PSI semana-a-semana que disparaban alertas WARNING/CRITICAL no atribuibles a drift real, contaminando la narrativa del LLM y el correo semanal. Lo mismo aplicaba a `null_rate`, que también vivía sobre una sola semana.
+
+**Decisión.**
+1. **Ventana rodante de 4 semanas** para PSI y para `null_rate`: el cálculo agrega `current_week + las 3 anteriores` (lunes ISO contiguos). Constante `PSI_WINDOW_WEEKS = 4` parametrizable por argumento opcional `window_weeks` en las funciones públicas, por si en el futuro se necesita ajustar.
+2. **Agregación por suma de conteos crudos**, no por promedio de porcentajes. Para cada `bin_label` de la variable, el helper `_aggregate_distributions_over_window(...)` hace `SUM(bin_count) GROUP BY bin_label` filtrando `origination_week IN (window)` y luego renormaliza. Esto equivale a calcular el PSI sobre la población combinada de las 4 semanas, respetando el peso real de cada semana.
+3. **Null rate análogo:** `Σ null_count / Σ total_records` sobre la ventana. `total_records` se duplica por bin en `FACT_DISTRIBUTIONS` (una fila por bin), así que se agrega por `(variable_id, origination_week)` con `MAX` antes de sumar entre semanas — evita inflarlo por el número de bins.
+4. **Cobertura parcial permitida:** si la ventana cubre menos semanas (al inicio del histórico, primeras semanas tras un baseline refresh, huecos por fallos de ETL), se usa lo que existe en `FACT_DISTRIBUTIONS` sin rellenar con ceros. No se loguea warning explícito — la query simplemente trae menos filas. Caso límite con 1 semana = comportamiento equivalente al cálculo single-week previo, lo que preserva los tests de integración existentes.
+5. **Firma pública estable:** `get_psi_for_variable`, `get_psi_for_all_variables`, `get_null_rates` mantienen sus parámetros previos; sólo se añadió `window_weeks` como kwarg opcional con default `PSI_WINDOW_WEEKS`. `MetricsCalculator` no requiere cambios — sigue invocándolas igual.
+6. **`compute_psi_from_df` intacta:** la función pura que calcula PSI a partir de dos DataFrames no cambia; toda la lógica nueva vive en el helper de agregación. Los tests unitarios sobre `compute_psi_from_df` siguen siendo válidos.
+
+**Razones.**
+- **Suma de conteos > promedio de porcentajes:** estadísticamente correcto. Promediar `bin_percentage` semana-a-semana asume volúmenes iguales y, si una semana tiene 100 registros y otra 10 000, le da el mismo peso. La suma de `bin_count` es equivalente a calcular PSI sobre la unión de las 4 cohortes — interpretación consistente con cómo se construyó el baseline.
+- **4 semanas:** ventana mensual usual en monitoreo crediticio. Cubre un ciclo de quincenas y eventos calendario habituales sin entrar en territorio donde drift real legítimo se diluye demasiado. Si hay drift real persistente, una semana tiene 25% del peso y la métrica reacciona sin retraso excesivo (vs un EMA o una ventana trimestral).
+- **Cobertura parcial sin warning:** en operación normal (post-MVP estable) la ventana siempre estará completa. En transitorios (primer mes tras un baseline refresh, recuperación de un hueco de ETL) la métrica degrada suavemente al equivalente single-week. Decisión consciente: preferir un valor calculable sobre lo que existe que devolver `0.0` o `NaN` — la ausencia de alarma sería peor que una alarma sobre menos historia.
+- **Aplicar a `null_rate` también:** mismo problema de varianza semana-a-semana. Coherencia narrativa con PSI: si se afirma que la métrica de drift está sobre una ventana mensual, no tiene sentido que la de calidad de datos sea single-week.
+
+**Alternativas descartadas.**
+- **Promedio simple de PSI semanales (4 PSIs y media):** matemáticamente incorrecto. PSI no es lineal en la distribución; la media de PSIs no es el PSI de la población combinada y puede sobrestimar drift cuando una semana tiene un blip aislado.
+- **EMA (exponential moving average):** suaviza también pero introduce un parámetro `α` adicional sin ganancia clara para el usuario y dificulta interpretar el "qué semanas estoy mirando". Una ventana fija de 4 lunes ISO es trivial de explicar.
+- **Ventana de 8 ó 13 semanas:** atenúa demasiado drift real. Crédito típicamente itera campañas mensualmente; una ventana mensual responde a tiempo a cambios de mix.
+- **Recalcular `bin_percentage` y persistir agregado en una nueva tabla:** sobre-ingeniería. La agregación es barata (SUM sobre ≤4 × n_bins filas por variable por query) y se hace una sola vez por ejecución del pipeline. No hay caso de uso que justifique materializarla.
+- **Reemplazar la firma pública (p.ej. añadir `window_weeks` como argumento posicional obligatorio):** rompería invocaciones existentes en `metrics/calculator.py`. Default opcional preserva compatibilidad y permite probar otras ventanas en notebooks.
+
+**Verificación.**
+- 81/81 tests pasan (75 previos + 6 nuevos en `tests/test_psi.py::TestRollingWindow`):
+  - `test_window_helper_returns_descending_mondays` — el helper devuelve los lunes correctos.
+  - `test_partial_coverage_falls_back_to_existing_weeks` — con sólo current_week en DB, mismo PSI que single-week previo.
+  - `test_full_window_smooths_single_week_spike` — con 3 semanas previas estables, el PSI rodante sobre una serie totalmente estable se mantiene bajo umbral.
+  - `test_drift_spike_attenuated_by_stable_history` — un spike aislado en current_week se atenúa cuando se agrega historia previa estable.
+  - `test_aggregation_sums_bin_counts` — verifica que el helper suma `bin_count` y no promedia porcentajes (test con totales muy distintos: 4000 vs 1000).
+  - `test_null_rate_uses_rolling_window` — null_rate con 200 nulls / 4000 totales = 0.05 vs 0.20 single-week.
+- Pipeline `--date 2026-04-06 --no-email --no-llm` (semana 15 ISO 2026): ETL re-ingesta y pipeline recalcula con la nueva métrica. Resultado documentado en `devlog.md`.
+
+
+## §8.2.28 Deciles con ventana rodante de 4 semanas + persistencia en `FACT_DECILES_HISTORY`
+
+**Fecha:** 2026-05-04 · **Estado:** Aceptado · **Supersede:** §8.2.26 (parcialmente — los gráficos siguen, pero la cohorte deja de ser puntual)
+
+**Contexto.** Las gráficas de deciles introducidas en §8.2.26 calculaban la tabla decil-a-decil sobre **una sola semana** (`primary_cohort = calculation_week - target_lag`) leyendo `FACT_PERFORMANCE_INDIVIDUAL`. Heredan el mismo problema que tenía PSI antes de §8.2.27: una sola semana presenta volumen bajo en varios segmentos (sub-scorecards `s1`, `s2` con cohortes < 200 obs), `pd.qcut(q=10)` colapsa a menos deciles, y la tasa por decil oscila por ruido de cohorte pequeña. Además, los deciles no se persistían en DB — eran efímeros, recomputados cada vez que se rendereaba el PDF, sin histórico consultable para análisis longitudinal del ordering del scorecard.
+
+**Decisión.**
+1. **Ventana rodante de 4 semanas hacia atrás** desde el cohorte primario para la consolidada y desde cada cohorte específico para el bloque per-target. Constante `DECILE_WINDOW_WEEKS = 4` y helper `_window_weeks(cohort_end)` que devuelve `[cohort_end, cohort_end-1, cohort_end-2, cohort_end-3]` lunes ISO, análogo exacto a `psi.py::_window_weeks`. El filtro pasa de `origination_week == cohort` a `origination_week.in_(window)`. La función pura `compute_decile_table` no cambia: opera sobre el DataFrame concatenado.
+2. **Hacia atrás, no hacia adelante ni centrada:** las semanas posteriores al cohorte tienen créditos con `origination > calculation_week - lag` y por tanto **no han alcanzado madurez** para el target. Sus outcomes serían parciales o sesgados (créditos que ya cayeron en mora se observan; los que aún no, no). Las semanas anteriores tienen créditos *más* maduros que el lag exigido — sus outcomes son al menos tan confiables como los del cohorte central.
+3. **Nueva tabla `FACT_DECILES_HISTORY`** en `db/models.py`. Columnas: `model_registry_id`, `calculation_week`, `target_variable`, `cohort_window_start/end`, `decile`, `score_min/max/mean`, `n_obs`, `n_events`, `event_rate`, `pct_population`. Unique constraint sobre `(model_registry_id, calculation_week, target_variable, decile)`. Append-only.
+4. **Persistencia idempotente** vía helper `persist_deciles_history()` en `metrics/decile_metrics.py`: borra filas previas para `(model, calculation_week, targets_con_datos)` y luego inserta. Permite re-runs del pipeline sobre la misma semana sin duplicar y reflejando datos actualizados (correcciones del CSV upstream, cambios de fórmula). Se invoca desde `report/builder.py::_build_decile_charts` después de computar deciles. El builder del PDF sigue consumiendo el mismo dict computado en memoria — la persistencia es side-effect.
+5. **Solo el bloque per-target se persiste**, no la consolidada. Razón: la consolidada es derivada (cada target tiene su tabla individual + las tasas cruzadas se reconstruyen merged-en-memoria si se necesita reproducir el chart). Persistir solo per-target evita redundancia y mantiene el unique constraint simple.
+
+**Razones.**
+- **Consistencia con §8.2.27:** mismo problema (varianza por cohorte chica), misma solución (ventana mensual hacia atrás). Coherencia narrativa: si PSI mira un mes, los deciles también deben mirar un mes.
+- **Ventana de 4 semanas:** mismo balance de §8.2.27. Cubre ciclo de quincenas, atenúa ruido sin diluir drift real.
+- **Persistir, no efímero:** patrón establecido del proyecto — `FACT_METRICS_HISTORY` ya guarda PSI/Gini/KS. Que los deciles fueran la única métrica efímera era una asimetría arbitraria. El valor concreto de persistir es habilitar análisis longitudinal del *ordering* (¿la curva event_rate-por-decil se está aplanando? ¿los deciles superiores aumentan tasa antes que los inferiores?) sin recomputar todo el pipeline.
+- **Tabla nueva, no extensión de `FACT_METRICS_HISTORY`:** la métrica decil tiene granularidad distinta (10 filas por target × segmento × semana, vs 1 valor escalar). Forzarla en la tabla genérica long-format con `metric_name = event_rate_d1, event_rate_d2, ...` ensucia el catálogo de métricas y obliga al builder a parsear nombres. Tabla dedicada es más limpia.
+- **Idempotencia por delete-then-insert (no UPSERT):** SQLite no tiene UPSERT trivial cross-dialect; delete-then-insert dentro de la misma transacción es robusto en SQLite y Postgres. La unique constraint actúa como red de seguridad si dos pipelines corren en paralelo (no es el caso operativo, pero defensivo).
+
+**Alternativas descartadas.**
+- **Cohorte puntual + ampliar `DECILE_MIN_OBS`:** subir el mínimo de obs a 400 dejaría a varios segmentos chicos (`s1`, `s2`) sin gráfica disponible. La ventana rodante mantiene la cobertura.
+- **Ventana centrada o hacia adelante:** rompe la garantía de madurez del target. Inaceptable.
+- **Persistir consolidada + per_target:** doble fuente de verdad, redundante. La consolidada es una proyección computacional de las tablas individuales.
+- **Persistir como JSON blob en `FACT_METRICS_HISTORY.details`:** dificulta queries SQL del histórico (decil 1 a lo largo del tiempo requiere parsear JSON). Tabla relacional pura es mejor.
+
+**Verificación.**
+- 100/100 tests pasan (94 previos + 6 nuevos en `tests/test_decile_metrics.py`):
+  - `TestWindowWeeks` × 3: el helper devuelve 4 lunes ISO descendentes, primer elemento = `cohort_end`, tamaño parametrizable.
+  - `TestRollingWindowDeciles::test_window_aggregates_4_weeks_and_excludes_future` — inserta 100 obs/semana en 4 semanas hacia atrás + 1 semana hacia adelante; verifica que `n_obs.sum() == 400` (la futura es excluida) y que `cohort_window_start/end` quedan correctos.
+  - `TestRollingWindowDeciles::test_persist_deciles_history_idempotent` — corre `persist_deciles_history` dos veces, verifica que el conteo de filas no crece.
+- Pipeline `--date 2026-04-06 --no-email --no-llm` contra DB local: `FACT_DECILES_HISTORY` queda con 3 targets × 11 segmentos × 10 deciles = 330 filas, ventanas alineadas (`b_malo4_6` lag=6 → `2026-02-02..2026-02-23`; `b_malo14_26` lag=26 → `2025-09-15..2025-10-06`). PDF se genera correctamente; gráficas reflejan ~4× más obs por decil que con cohorte puntual.
+
+
+## §8.2.29 Baseline derivado de `variables_serc` (primeras 4 semanas del año en curso)
+
+**Fecha:** 2026-05-06 · **Estado:** Aceptado · **Supersede:** §8.2.16 y §8.2.18 (sólo la fuente del baseline; el schema `META_BASELINE_DISTRIBUTIONS` y la separación baseline/producción que esas ADRs introdujeron se mantienen sin cambios)
+
+**Contexto.** §8.2.16 y §8.2.18 establecieron `base_train_test_bb.csv` (formato WIDE, ~501K filas) como fuente del baseline de PSI. La motivación entonces fue evitar la primera semana de `variables_serc` por volumen bajo y por requerir mapeo SERC→canónico. Con el sistema en producción y varios meses de datos acumulados en `variables_serc`, el contexto cambió: (a) ya hay volumen suficiente acumulando varias semanas recientes (la ventana W1-W4 2026 tiene 235 364 créditos únicos vs ~50K/segmento del baseline original); (b) `base_train_test_bb.csv` representa la población **de entrenamiento** del scorecard, no la población operativa actual — los segmentos en producción ya divergieron naturalmente de esa distribución por evolución del mix de canales, campañas y perfil de solicitantes; (c) ese drift estructural se contabilizaba como "alarma de PSI" en cada semana a pesar de no reflejar drift relativo a la operación reciente. Resultado: PSI sistemáticamente alto contra el baseline de entrenamiento, contaminando la lectura de "drift de la semana actual vs operación reciente", que es lo que el reporte semanal busca comunicar.
+
+**Decisión.**
+1. **Fuente del baseline = `variables_serc_*.csv`**, filtrado a las **primeras 4 semanas ISO del año en curso** (default 2026, lunes ISO `2025-12-29`, `2026-01-05`, `2026-01-12`, `2026-01-19`). El año y la cantidad de semanas son parametrizables (`--year`, `--n-weeks`) para soportar refrescos anuales del baseline o experimentación con ventanas distintas.
+2. **Implementación como subclase, no reemplazo destructivo:** `src/mlmonitor/data/bootstrap_v2.py` define `ModelBootstrapV2(ModelBootstrap)` que sobreescribe sólo `_populate_baseline_distributions` y agrega un método de carga LONG (`_load_serc_baseline_window`). META_MODEL_REGISTRY, META_VARIABLES y META_METRIC_THRESHOLDS se heredan sin cambios. Runner paralelo `scripts/run_bootstrap_v2.py`. `bootstrap.py` y `run_bootstrap.py` originales se conservan operacionales — la transición a V2 como camino oficial se hace cambiando la invocación del bootstrap, no eliminando el código antiguo (deuda de consolidación registrada para otra iteración).
+3. **Lógica de binning idéntica:** numéricas via `pd.qcut(q=10)` con cuts persistidos en `MetaVariables.binning_rules`; categóricas (fisexo) por `value_counts` persistido en `woe_categories`; score con `SCORE_BIN_CUTS` fijos (0-100, 100-200, …, 900-1000). Esto garantiza que las distribuciones de producción sigan binning-eando contra los mismos cuts que el baseline calculó, manteniendo la comparabilidad.
+4. **Schema `META_BASELINE_DISTRIBUTIONS` sin cambios.** La tabla, su unique constraint `(model_registry_id, variable_id, bin_label)` y la separación lógica baseline/producción de §8.2.18 siguen siendo correctos — sólo cambia el origen de los datos que la pueblan.
+5. **Ventana fija (no rolling) y refresco manual.** El baseline V2 no se actualiza automáticamente cada semana; se recalcula sólo cuando se ejecuta `run_bootstrap_v2.py`. Esto preserva la propiedad esencial del baseline: ser un punto de referencia estable contra el cual medir drift. Si fuera rolling, el "drift contra el baseline" tendería a cero por construcción.
+
+**Razones.**
+- **Misma fuente que producción.** El baseline y las semanas operativas ahora vienen del mismo extract, con los mismos filtros upstream, mismo formato LONG, mismo proceso de `serc_to_canonical`. Cualquier cambio sistemático en el pipeline upstream afecta a ambos por igual y no se contabiliza falsamente como drift.
+- **Volumen suficiente.** 4 semanas × ~58K créditos = 235K obs total, distribuidos en 11 segmentos. Comparable en orden de magnitud al baseline original por segmento (~50K), eliminando la objeción de §8.2.16 sobre "primera semana muy pequeña".
+- **Temporalidad cercana a la operación.** El baseline ahora representa "cómo se ve la operación al inicio del año" y el reporte mide "cómo se desvía de eso". Es una pregunta más útil operacionalmente que "cómo se desvía de la población de entrenamiento del scorecard hace X meses".
+- **Refrescable anualmente sin cambios de código.** Cuando inicie 2027, se puede recorrer `--year 2027` y opcionalmente cerrar SCD2 del baseline anterior (decisión a discutir en su momento). El parámetro evita hardcodear el año.
+- **Subclase sobre fork:** mantiene un único punto de verdad para META tables, thresholds y descripciones. Si bootstrap original cambia (p. ej. carga de descripciones desde diccionarios), V2 lo hereda sin esfuerzo.
+
+**Alternativas descartadas.**
+- **Mantener `base_train_test_bb.csv`:** la objeción operacional es real y persistente (drift estructural no relacionado con la semana actual). Soluciona algo que ya no es problema (volumen) a costa de algo que sí lo es (alarmas falsas).
+- **Baseline rolling de N semanas que se actualiza cada semana:** elimina por construcción el concepto de "drift". Útil para detectar cambios bruscos vs el mes anterior, pero no es la pregunta que el reporte responde — y además se solapa con la ventana rodante de PSI introducida en §8.2.27.
+- **Baseline como percentiles fijos (sin recálculo desde data):** sobre-ingeniería — la fuente real son los créditos del Q1 y derivar la distribución desde ellos es lo natural. Persistir percentiles "fijos" introduciría una capa de abstracción innecesaria.
+- **Ventana de 1 ó 8 semanas en lugar de 4:** 1 semana reproduce el problema original de §8.2.16 (volumen bajo en algunos segmentos). 8 semanas empieza a solapar con periodos donde podría haber drift legítimo del año en curso, mezclando "punto de referencia" con "inicio del periodo monitoreado". 4 semanas = mes calendario, balance simétrico con la ventana rodante de PSI (§8.2.27).
+- **Reescribir `bootstrap.py` directamente en lugar de subclasear:** dejaría sin paso atrás si V2 resultaba peor en producción. Coexistencia de ambos durante la transición es barata.
+
+**Impacto medible.**
+- Pipeline `--date 2026-04-06` con baseline original: `1 OK | 3 WARNING | 7 CRITICAL`.
+- Pipeline `--date 2026-04-06` con baseline V2: `1 OK | 6 WARNING | 4 CRITICAL`.
+- 3 segmentos pasaron CRITICAL → WARNING. La caída de severidad es esperada por construcción y consistente con la hipótesis: el drift contra una distribución reciente de la misma fuente es menor que contra la distribución de entrenamiento.
+
+**Verificación.**
+- Bootstrap V2 contra SQLite local: 11 segmentos · 139 META_VARIABLES · 216 META_METRIC_THRESHOLDS · 808 META_BASELINE_DISTRIBUTIONS. Ventana cargada: 2.83M filas SERC, 235 364 créditos únicos.
+- ETL incremental para las 4 semanas operativas (2026-03-16, 03-23, 03-30, 04-06) corre OK; pipeline `run_pipeline.py --date 2026-04-06 --db-url sqlite:///mlmonitor_dev.db --no-email` genera 322 métricas y PDF sin errores.
+- Tests existentes (no se agregaron tests nuevos en esta iteración — la lógica de binning es la heredada y ya estaba cubierta): suite total se ejecuta como `poetry run pytest` y debe seguir verde tras la migración a V2 oficial.
+
+**Pendiente / próximos pasos.**
+- Consolidar `bootstrap.py` y `bootstrap_v2.py` en un único bootstrap cuando V2 esté validado en RDS (deuda registrada).
+- Decidir cadencia de refresco (anual? bianual?) y mecanismo (¿cerrar SCD2 del baseline anterior y crear uno nuevo, o sobrescribir?). Esto se documentará en una ADR aparte cuando se acerque el primer refresco.

@@ -14,6 +14,7 @@ from datetime import date, timedelta
 
 from sqlalchemy.orm import Session
 
+from config.settings import settings
 from mlmonitor.analyst.base import AnalysisContext, AnalysisResult, SegmentMetrics
 from mlmonitor.data.bootstrap import PRIMARY_TARGET
 from mlmonitor.db.models import (
@@ -23,14 +24,102 @@ from mlmonitor.db.models import (
     MetaVariables,
 )
 from mlmonitor.metrics.business_metrics import get_business_metrics_table
-from mlmonitor.metrics.decile_metrics import get_decile_data_for_segment
+from mlmonitor.metrics.decile_metrics import (
+    get_decile_data_for_segment,
+    persist_deciles_history,
+)
 from mlmonitor.report.charts import (
     render_consolidated_decile_chart,
     render_per_target_decile_chart,
 )
 
-STATUS_ORDER = {"CRITICAL": 0, "WARNING": 1, "OK": 2}
 _LABEL_TO_FLAG = {"OK": 0, "WARNING": 1, "CRITICAL": 2}
+STATUS_DISPLAY_ES = {"OK": "OK", "WARNING": "ADVERTENCIA", "CRITICAL": "CRÍTICO"}
+
+
+def _segment_sort_key(segment_id: str) -> int:
+    """Convierte 's1', 's10' a 1, 10 para sort numérico (no alfabético).
+
+    Fallback a 999 para IDs no estándar — los deja al final sin romper el sort.
+    """
+    if segment_id.startswith("s") and segment_id[1:].isdigit():
+        return int(segment_id[1:])
+    return 999
+
+
+def _is_headline_alert(alert_key: str, primary_target: str) -> bool:
+    """Métricas 'headline': cualquier crítica eleva el segmento a CRÍTICO inmediatamente.
+
+    PSI del score, Gini y KS del target primario miden directamente la salud
+    del modelo — no se cuentan, escalan en automático.
+    """
+    return alert_key in {
+        "psi_score",
+        f"gini_{primary_target}",
+        f"ks_{primary_target}",
+    }
+
+
+def _aggregate_status(
+    active_alerts: list[dict],
+    primary_target: str,
+) -> tuple[str, str]:
+    """Calcula el estado agregado del segmento + razón corta.
+
+    Reglas (ver docs/architecture/data_model.md §4.7):
+    1. 1+ headline crítico → CRITICAL (inmediato)
+    2. ≥ status_crit_count_to_critical (5) agregables críticos → CRITICAL
+    3. ≥ status_crit_count_to_warning (3) agregables críticos,
+       O headline en WARNING,
+       O ≥ status_warn_count_to_warning (8) agregables warnings → WARNING
+    4. Resto → OK
+
+    Headlines: psi_score, gini_<primary_target>, ks_<primary_target>.
+    psi_max se excluye del conteo para no doble-contar (ya está cubierto
+    por psi_<variable> individuales y por psi_score).
+    Umbrales configurables en config/settings.py.
+    """
+    relevant = [a for a in active_alerts if a.get("metric") != "psi_max"]
+
+    headline_crit = [
+        a for a in relevant
+        if a["flag"] == 2 and _is_headline_alert(a["metric"], primary_target)
+    ]
+    if headline_crit:
+        kinds = ", ".join(sorted({a["metric_kind"] for a in headline_crit}))
+        return "CRITICAL", f"headline crítico ({kinds})"
+
+    headline_warn = [
+        a for a in relevant
+        if a["flag"] == 1 and _is_headline_alert(a["metric"], primary_target)
+    ]
+    agg_crits = [
+        a for a in relevant
+        if a["flag"] == 2 and not _is_headline_alert(a["metric"], primary_target)
+    ]
+    agg_warns = [
+        a for a in relevant
+        if a["flag"] == 1 and not _is_headline_alert(a["metric"], primary_target)
+    ]
+
+    if len(agg_crits) >= settings.status_crit_count_to_critical:
+        return (
+            "CRITICAL",
+            f"{len(agg_crits)} alertas críticas agregadas "
+            f"(umbral: ≥{settings.status_crit_count_to_critical})",
+        )
+
+    triggers = []
+    if len(agg_crits) >= settings.status_crit_count_to_warning:
+        triggers.append(f"{len(agg_crits)} crítica(s) agregada(s)")
+    if headline_warn:
+        triggers.append(f"{len(headline_warn)} headline en advertencia")
+    if len(agg_warns) >= settings.status_warn_count_to_warning:
+        triggers.append(f"{len(agg_warns)} advertencia(s) agregadas")
+
+    if triggers:
+        return "WARNING", "; ".join(triggers)
+    return "OK", "sin alertas relevantes"
 
 
 def _classify_alert(
@@ -197,8 +286,8 @@ class ReportBuilder:
             )
             segments.append(seg_metrics)
 
-        # Ordenar por urgencia
-        segments.sort(key=lambda s: STATUS_ORDER.get(s.overall_status, 99))
+        # Orden numérico estricto (s1, s2, …, s10, s11) — no por urgencia.
+        segments.sort(key=lambda s: _segment_sort_key(s.segment_id))
 
         # Fleet summary
         fleet_summary = {
@@ -332,13 +421,8 @@ class ReportBuilder:
                 })
         active_alerts.sort(key=lambda x: -x["flag"])
 
-        # Overall status
-        if any(a["flag"] == 2 for a in active_alerts):
-            overall_status = "CRITICAL"
-        elif any(a["flag"] == 1 for a in active_alerts):
-            overall_status = "WARNING"
-        else:
-            overall_status = "OK"
+        # Overall status — ver _aggregate_status para la lógica detallada
+        overall_status, status_reason = _aggregate_status(active_alerts, primary_target)
 
         # Business table — cada target tiene su propio origination_week (calculado internamente)
         business_df = get_business_metrics_table(
@@ -368,6 +452,7 @@ class ReportBuilder:
             segment_id=segment_id,
             segment_description=segment_description,
             overall_status=overall_status,
+            status_reason=status_reason,
             psi_max=psi_max,
             psi_max_variable=psi_max_variable,
             gini=gini,
@@ -407,6 +492,13 @@ class ReportBuilder:
             calculation_week=calculation_week,
             primary_target_lag=primary_lag,
             all_targets=target_vars,
+        )
+
+        persist_deciles_history(
+            session=self.session,
+            model_registry_id=model_registry_id,
+            calculation_week=calculation_week,
+            decile_data=decile_data,
         )
 
         cons = decile_data["consolidated"]

@@ -57,7 +57,7 @@ TARGET_VARIABLES: dict[str, dict] = {
     "b_malo14_26": {"lag_semanas": 26, "ascending_order": False},
 }
 
-PRIMARY_TARGET = "b_malo8_13"
+PRIMARY_TARGET = "b_malo14_26"
 
 
 def _load_variable_descriptions(raw_dir: Path) -> dict[str, str]:

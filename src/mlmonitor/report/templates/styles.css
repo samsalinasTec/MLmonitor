@@ -1,4 +1,15 @@
-/* MLMonitor — Estilos del reporte PDF */
+/* MLMonitor — Estilos del reporte PDF (paleta Elektra) */
+
+/* Paleta Elektra (referencia — los valores están hardcodeados abajo
+   porque weasyprint 60.2 no resuelve confiablemente var() en background:
+   shorthand de <thead th>, lo que invisibiliza el header de las tablas).
+   --elektra-red:      #DC1F0F
+   --elektra-red-dark: #A8160A
+   --elektra-text:     #1a1a2e
+   --text-muted:       #6b7280
+   --bg-light:         #f8f9fa
+   --border-light:     #dee2e6
+*/
 
 @page {
     size: A4;
@@ -33,17 +44,29 @@ body {
     page-break-after: always;
     height: 26cm;
     padding: 5cm 2cm 2cm 2cm;
-    background: linear-gradient(135deg, #0a0e1a 0%, #16213e 45%, #1a1a3e 100%);
-    color: white;
+    /* Gradient diagonal: blanco a la izquierda, rojo Elektra a la derecha,
+       inspirado en la portada del slide de presentación. */
+    background: linear-gradient(110deg,
+        #ffffff 0%,
+        #ffffff 55%,
+        #DC1F0F 70%,
+        #A8160A 100%);
+    color: #1a1a2e;
 }
 
 .cover-logo {
-    font-size: 11pt;
-    letter-spacing: 0.3em;
-    text-transform: uppercase;
-    color: #8b5cf6;
-    margin-bottom: 0.5cm;
-    font-weight: 700;
+    font-size: 20pt;
+    letter-spacing: 0.02em;
+    color: #DC1F0F;
+    margin-bottom: 1cm;
+    font-weight: 800;
+}
+
+.cover-logo-img {
+    display: block;
+    max-width: 4.5cm;
+    height: auto;
+    margin-bottom: 1cm;
 }
 
 .cover-title {
@@ -51,37 +74,37 @@ body {
     font-weight: 700;
     line-height: 1.2;
     margin-bottom: 0.5cm;
-    color: white;
+    color: #1a1a2e;
 }
 
 .cover-subtitle {
     font-size: 16pt;
-    color: #06b6d4;
+    color: #6b7280;
     margin-bottom: 1.5cm;
 }
 
 .cover-meta {
     margin-top: 1cm;
-    border-top: 1px solid rgba(255,255,255,0.3);
+    border-top: 1px solid #dee2e6;
     padding-top: 0.5cm;
 }
 
 .cover-meta p {
     font-size: 10pt;
-    color: rgba(255,255,255,0.8);
+    color: #1a1a2e;
     margin-bottom: 0.2cm;
 }
 
 .cover-meta strong {
-    color: white;
+    color: #1a1a2e;
 }
 
 /* ---- Headings ---- */
 h1 {
     font-size: 16pt;
-    color: #1a1a3e;
+    color: #1a1a2e;
     font-weight: 700;
-    border-bottom: 2px solid #8b5cf6;
+    border-bottom: 2px solid #DC1F0F;
     padding-bottom: 0.2cm;
     margin-top: 0.8cm;
     margin-bottom: 0.5cm;
@@ -90,9 +113,9 @@ h1 {
 
 h2 {
     font-size: 13pt;
-    color: #1a1a3e;
+    color: #1a1a2e;
     font-weight: 600;
-    border-left: 4px solid #06b6d4;
+    border-left: 4px solid #DC1F0F;
     padding-left: 0.3cm;
     margin-top: 0.6cm;
     margin-bottom: 0.4cm;
@@ -101,14 +124,14 @@ h2 {
 
 h3 {
     font-size: 11pt;
-    color: #1a1a3e;
+    color: #1a1a2e;
     font-weight: 600;
     margin-top: 0.4cm;
     margin-bottom: 0.3cm;
     page-break-after: avoid;
 }
 
-/* ---- Status badges ---- */
+/* ---- Status badges (semánticos, no se rebrandean) ---- */
 .badge {
     display: inline-block;
     padding: 0.1cm 0.3cm;
@@ -146,7 +169,7 @@ table {
 }
 
 thead th {
-    background: #1a1a3e;
+    background: #A8160A;
     color: white;
     padding: 0.15cm 0.3cm;
     text-align: left;
@@ -158,7 +181,7 @@ tbody tr:nth-child(even) {
 }
 
 tbody tr:hover {
-    background: #e8f4f8;
+    background: #fdecea;
 }
 
 td, th {
@@ -173,6 +196,20 @@ td.value-critical { color: #991b1b; font-weight: bold; }
 
 td, th { word-break: break-word; }
 .metric-row td:first-child { word-break: break-word; }
+
+/* Tabla "Estado por Segmento": layout fijo con anchos en <colgroup>.
+   Necesario porque la columna PSI Max (variable) lleva texto largo
+   (descripción + nombre técnico) que sin layout fijo desborda la página. */
+table.fleet-status-table {
+    table-layout: fixed;
+    font-size: 8.5pt;
+}
+table.fleet-status-table th,
+table.fleet-status-table td {
+    padding: 0.1cm 0.18cm;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+}
 
 /* ---- Fleet summary cards ---- */
 .fleet-cards {
@@ -205,8 +242,8 @@ td, th { word-break: break-word; }
     letter-spacing: 0.05em;
 }
 
-.fleet-card-total { background: #dbeafe; }
-.fleet-card-total .card-number { color: #1e3a8a; }
+.fleet-card-total { background: #fdecea; }
+.fleet-card-total .card-number { color: #A8160A; }
 .fleet-card-ok { background: #d1fae5; }
 .fleet-card-ok .card-number { color: #065f46; }
 .fleet-card-warning { background: #fef3c7; }
@@ -214,16 +251,37 @@ td, th { word-break: break-word; }
 .fleet-card-critical { background: #fee2e2; }
 .fleet-card-critical .card-number { color: #991b1b; }
 
-/* ---- Narrative box ---- */
+/* ---- Narrative box (Resumen Ejecutivo / análisis por segmento) ---- */
 .narrative-box {
-    background: #f8f9fa;
-    border-left: 4px solid #3b82f6;
-    padding: 0.4cm 0.5cm;
-    margin: 0.4cm 0;
+    background: #fff7f6;
+    border: 1px solid #f4cdc9;
+    border-top: 3px solid #DC1F0F;
+    padding: 0.5cm 0.7cm;
+    margin: 0.4cm 0 0.6cm 0;
     font-size: 10pt;
-    color: #1f2937;
-    border-radius: 0 4px 4px 0;
+    color: #1a1a2e;
+    border-radius: 4px;
     page-break-inside: avoid;
+}
+
+.narrative-box .narrative-title {
+    font-size: 11pt;
+    font-weight: 700;
+    color: #A8160A;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    margin-bottom: 0.3cm;
+    padding-bottom: 0.15cm;
+    border-bottom: 1px solid #f4cdc9;
+}
+
+.narrative-box p {
+    margin-bottom: 0.25cm;
+    line-height: 1.6;
+}
+
+.narrative-box p:last-child {
+    margin-bottom: 0;
 }
 
 /* ---- Alert list ---- */
@@ -259,7 +317,7 @@ td, th { word-break: break-word; }
 
 .priority-critico { color: #991b1b; font-weight: 700; }
 .priority-alta { color: #92400e; font-weight: 700; }
-.priority-media { color: #1e40af; font-weight: 700; }
+.priority-media { color: #A8160A; font-weight: 700; }
 .priority-monitoreo { color: #065f46; font-weight: 700; }
 
 /* ---- Section divider ---- */
@@ -278,7 +336,7 @@ td, th { word-break: break-word; }
 .ranking-table .rank-num {
     font-size: 14pt;
     font-weight: 700;
-    color: #1a1a3e;
+    color: #A8160A;
     text-align: center;
 }
 

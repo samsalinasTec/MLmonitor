@@ -17,6 +17,7 @@ class SegmentMetrics:
     segment_id: str
     segment_description: str
     overall_status: str  # "OK" | "WARNING" | "CRITICAL"
+    status_reason: str   # texto corto explicando por qué se asignó overall_status
     psi_max: float | None
     psi_max_variable: str | None
     gini: dict            # {b_malo_col: float | None} — Gini por variable de performance

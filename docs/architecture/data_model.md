@@ -358,6 +358,41 @@ La tolerancia numérica de `check_ordering_violations` es `0.005` (medio punto p
 
 11 submodelos `s1..s11` agrupados en 5 grupos (G1–G5). Nombres de grupos y conteos de features por segmento viven en `src/mlmonitor/data/variable_mapping.py` (`SEGMENT_GROUP_NAMES`, `SEGMENT_FEATURE_COUNTS`).
 
+### 4.7 Estado agregado del segmento (`overall_status`)
+
+El estado de salud global de cada segmento se calcula en `report/builder.py::_aggregate_status()` a partir de las alertas individuales ya persistidas en `FACT_METRICS_HISTORY.alert_label`. **No se persiste en la base de datos** — se computa al vuelo cada vez que se genera un reporte.
+
+Las métricas se dividen en dos categorías:
+
+- **Headline** (`psi_score`, `gini_<primary_target>`, `ks_<primary_target>`): las métricas de mayor impacto.
+- **Agregables** (resto de métricas, excluyendo `psi_max` para no doble-contar): se cuentan por severidad.
+
+Árbol de decisión:
+
+```
+¿Hay alguna métrica headline en CRITICAL?
+  → Sí → CRITICAL (inmediato, sin importar el resto)
+  → No ↓
+¿Hay ≥ status_crit_count_to_critical métricas agregables en CRITICAL?
+  → Sí → CRITICAL
+  → No ↓
+¿Hay ≥ status_crit_count_to_warning críticas agregables,
+  O headline en WARNING,
+  O ≥ status_warn_count_to_warning warnings agregables?
+  → Sí → WARNING
+  → No → OK
+```
+
+Los umbrales de conteo son configurables en `config/settings.py`:
+
+| Setting | Valor | Efecto |
+|---|---|---|
+| `status_crit_count_to_critical` | 5 | ≥5 críticas agregables → CRITICAL |
+| `status_crit_count_to_warning` | 3 | ≥3 críticas agregables → WARNING |
+| `status_warn_count_to_warning` | 8 | ≥8 warnings agregables → WARNING |
+
+El campo `status_reason` en `SegmentMetrics` explica la razón del estado asignado (ej. `"headline crítico (PSI)"`, `"3 crítica(s) agregada(s); 2 headline en advertencia"`).
+
 ---
 
 ## 5. Cambios en el schema — flujo operativo

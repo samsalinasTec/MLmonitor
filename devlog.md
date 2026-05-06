@@ -6,6 +6,89 @@ Formato: encabezado por fecha ISO (`## YYYY-MM-DD`) + bullets cortos. Entradas m
 
 ---
 
+## 2026-05-06
+
+- **Bootstrap V2: baseline desde `variables_serc` en vez de `base_train_test_bb.csv`** (`feature/new_psi_calculation`). Reemplazo del baseline de entrenamiento (formato WIDE, ~501K filas) por las **primeras 4 semanas ISO del año en curso** dentro de `variables_serc_*.csv` (LONG). Motivación: el baseline original es la población histórica de entrenamiento; los segmentos productivos ya divergieron de esa distribución, lo que inflaba PSI sin reflejar drift reciente. Usar Q1 del año actual ancla el baseline a la misma fuente y a una temporalidad cercana a la operación.
+  - **Nuevos archivos:** `src/mlmonitor/data/bootstrap_v2.py` (subclase `ModelBootstrapV2(ModelBootstrap)` que sobreescribe sólo `_populate_baseline_distributions`) y `scripts/run_bootstrap_v2.py` (runner paralelo a `run_bootstrap.py` con flags `--year`, `--n-weeks`, `--variables-serc-file`, `--db-url`). META_MODEL_REGISTRY, META_VARIABLES y META_METRIC_THRESHOLDS quedan idénticas (heredadas).
+  - **Lógica del nuevo baseline:** lee `variables_serc_*.csv` con `usecols` reducido (6 cols), deriva `_iso_year`/`_iso_week` desde `fdregistro_solicitud` (epoch ms → date), filtra a `(year=2026, weeks∈{1..4})`, mapea SERC→canónico vía `serc_to_canonical`, y calcula bins exactamente como `bootstrap.py`: numéricas vía `pd.qcut(q=10)` con persistencia de cuts en `MetaVariables.binning_rules`, categóricas (fisexo) por `value_counts` con persistencia en `woe_categories`, score con `SCORE_BIN_CUTS` fijos. Ventana W1-W4 2026 = lunes ISO `2025-12-29`, `2026-01-05`, `2026-01-12`, `2026-01-19`.
+  - **Validación end-to-end (SQLite local):** `rm mlmonitor_dev.db && poetry run python scripts/run_bootstrap_v2.py --db-url sqlite:///mlmonitor_dev.db` → 11 segmentos × 139 variables × 216 thresholds × **808 baseline rows**. Ventana baseline: 2.83M filas SERC, **235 364 créditos únicos**.
+  - **Resultado del experimento (`run_pipeline.py --date 2026-04-06`):** estado de flota pasa de `1 OK | 3 WARNING | 7 CRITICAL` (baseline original) a `1 OK | 6 WARNING | 4 CRITICAL` (baseline V2). 3 segmentos pasaron CRITICAL → WARNING. Consistente con la hipótesis: con baseline reciente, las distribuciones recientes están más cerca de él → PSI menor.
+  - **Confirmación del usuario:** el cambio se queda. Bootstrap V2 será el camino oficial. Próximo paso: deprecar `bootstrap.py` original o consolidar en uno solo (pendiente decisión sobre si mantener path para `base_train_test_bb.csv` con flag).
+  - **ADR formal:** `docs/decisions.md §8.2.29` documenta motivación, supersede de §8.2.16 y §8.2.18 (sólo en cuanto a la fuente del baseline; el schema y el refactor de tabla separada `META_BASELINE_DISTRIBUTIONS` se mantienen).
+  - **Pitfall observado en sesión:** la env var `DB_URL=` no es suficiente para forzar SQLite local porque `config/settings.py::_build_settings` sobreescribe `db_url` con el valor de Secrets Manager si AWS está disponible. Forma correcta para experimentos locales: pasar `--db-url sqlite:///mlmonitor_dev.db` explícito en cada script.
+
+---
+
+## 2026-05-05
+
+- **Ajuste de umbrales de agregación de severidad.** Los umbrales en `config/settings.py` que controlan cuándo un segmento sube de OK a WARNING o CRITICAL eran demasiado sensibles. Valores anteriores → nuevos:
+  - `status_crit_count_to_critical`: 3 → **5** (antes bastaban 3 métricas agregables críticas para CRITICAL)
+  - `status_crit_count_to_warning`: 1 → **3** (antes bastaba 1 crítica agregable para WARNING)
+  - `status_warn_count_to_warning`: 4 → **8** (antes bastaban 4 warnings agregables para WARNING)
+  - La regla de headline CRITICAL (PSI score, Gini/KS del target primario) sigue igual: 1 headline crítica → CRITICAL inmediato.
+- **Re-ejecución del pipeline** con `--date 2026-04-06`: resultado de flota pasó a **5 OK | 5 WARNING | 1 CRITICAL** (antes 0 OK | 0 WARNING | 11 CRITICAL con la regla vieja). No fue necesario borrar registros ni re-correr ETL — `overall_status` se computa al vuelo en `_aggregate_status()`, no se persiste en BD.
+- **Documentación:** nueva sección `data_model.md §4.7` con el árbol de decisión completo, tabla de umbrales, y explicación de headline vs agregables. Docstring de `_aggregate_status` actualizado con referencia cruzada a la doc.
+
+---
+
+## 2026-05-04
+
+- **Resumen ejecutivo en card** (`feature/new_psi_calculation`): rediseño visual del `narrative-box` que envuelve la narrativa del LLM. Antes era una caja gris con border-left rojo y un `<h2>Análisis Ejecutivo</h2>` externo. Ahora es una card con fondo `#fff7f6` (rojo muy sutil), borde general `#f4cdc9`, top-border de 3px en rojo Elektra `#DC1F0F`, padding mayor y radius 4px. El título pasa al interior con clase `.narrative-title` (uppercase, color rojo oscuro `#A8160A`, separador inferior). Aplicado en dos lugares: `Resumen Ejecutivo` en `fleet_report.html` y `Análisis del Segmento` en cada `submodel_section.html`. Sin cambios funcionales — solo estética.
+
+- **Bug fix paleta:** los headers de las tablas (`<thead th>`) salían invisibles (texto blanco sobre bg blanco). Causa: weasyprint 60.2 no resuelve confiablemente `var()` dentro de `background:` shorthand. Solución: hardcodear los hex (`#A8160A`, `#DC1F0F`, etc.) en lugar de `var(--elektra-*)`. Las variables CSS quedan documentadas como comentario al inicio de `styles.css` para futura referencia. Verificado: headers ahora visibles en blanco sobre rojo Elektra oscuro.
+
+- **Rebrand Elektra + orden estricto de segmentos + bypass de demo** (`feature/new_psi_calculation`):
+  - **Paleta Elektra en `templates/styles.css`**: variables CSS en `:root` (`--elektra-red: #DC1F0F`, `--elektra-red-dark: #A8160A`, `--elektra-text: #1a1a2e`, etc.). Cover-page reemplaza el gradient azul oscuro por uno diagonal blanco→rojo (110deg), texto del cover en negro/gris (sobre fondo blanco). Accents h1/h2 border y narrative-box-border pasan de púrpura/cyan/azul a rojo Elektra. Table header bg de `#1a1a3e` a `var(--elektra-red-dark)`. Status badges (OK/WARN/CRIT verde/ámbar/rojo) y cards se mantienen — son semánticos, no de marca.
+  - **Logo en portada**: nueva ruta `artifacts/images/elektra-logo.png` (carpeta nueva, ya en `.gitignore` por el patrón `artifacts/`). `renderer.py` resuelve el path con `as_uri()` y lo pasa a Jinja como `logo_path`. Si el archivo no existe, el template usa fallback `<div class="cover-logo">elektra</div>` con tipografía bold en rojo.
+  - **Orden estricto numérico de segmentos** (`report/builder.py`): nuevo helper `_segment_sort_key("s10") → 10` para sort numérico (no alfabético). Reemplaza el sort por `STATUS_ORDER` (eliminado, no se usaba en otro lado). Ahora el PDF presenta s1, s2, …, s10, s11 en ese orden estricto en (a) tabla "Estado por Segmento", (b) secciones individuales por segmento, (c) ranking final. Trade-off consciente: ya no hay "más urgentes primero".
+  - **Tests:** 103/103 verdes (100 previos + 3 en `tests/test_segment_ordering.py` para `_segment_sort_key`).
+  - **Bypass de demo en `/tmp/run_report_demo_calm.py`** (NO commiteado, replica patrón de `/tmp/run_report_alt_target.py`):
+    - **Disable headline para `psi_score`**: monkey-patch sobre `builder._is_headline_alert`. `psi_score` deja de auto-escalar el segmento a CRÍTICO; ahora se cuenta como métrica agregable normal.
+    - **Cap "PSI > 1 → naranja"**: copia los templates a `/tmp/templates_demo/` y modifica los condicionales Jinja en celdas y badge de PSI máximo (`fleet_report.html:99`, `submodel_section.html:73, 77`) añadiendo `or seg.psi_max > 1.0` antes del branch `'critical'`. Luego inyecta el `FileSystemLoader` apuntando a `/tmp/templates_demo` en `PDFRenderer.__init__`. PSI ≤ 1 mantiene la lógica normal de thresholds.
+    - **Resultado:** fleet summary pasó de `0 OK | 0 WARNING | 11 CRITICAL` (oficial) a `0 OK | 2 WARNING | 9 CRITICAL` (demo). Los 9 críticos restantes tienen métricas críticas más allá de PSI (gini/ks fuera de threshold). PDF de demo en `artifacts/reports/mlmonitor_2026-04-06_demo.pdf`.
+  - **Verificación:** `poetry run pytest` → 103/103 OK; pipeline oficial corre y genera PDF con paleta Elektra y orden numérico; bypass /tmp genera el PDF demo con números PSI grandes (16.017, 17.610) en naranja.
+
+- **Deciles con ventana rodante + persistencia + fix PDF + portada** (`feature/new_psi_calculation`):
+  - **Ventana rodante 4 semanas hacia atrás** en `metrics/decile_metrics.py`: nuevo `DECILE_WINDOW_WEEKS=4` y helper `_window_weeks(cohort_end)` análogo a `psi.py::_window_weeks`. El filtro pasa de `origination_week == cohort` a `origination_week.in_(window)` en ambas ramas (consolidada y per-target). Rationale: hacia atrás = créditos más viejos = madurez ≥ lag, sus outcomes son confiables. Hacia adelante NO sirve (créditos no maduros).
+  - **Nueva tabla `FACT_DECILES_HISTORY`** (`db/models.py`): persiste deciles per-target/per-segment con `cohort_window_start`/`end`, `n_obs`, `n_events`, `event_rate`, `pct_population`. Unique constraint `(model_registry_id, calculation_week, target_variable, decile)` + helper `persist_deciles_history()` con delete-then-insert para idempotencia. Se llama desde `report/builder.py::_build_decile_charts` después de computar deciles.
+  - **Fix overflow tabla "Estado por Segmento"**: nueva clase `.fleet-status-table` con `table-layout: fixed`, anchos en `<colgroup>` (7/19/11/28/10/10/7%), `font-size: 8.5pt`, `padding 0.1cm`. La columna "PSI Max (variable)" lleva nombre técnico largo (ej. `edo_median_ti_4_6_rez`) que sin layout fijo desbordaba el margen derecho.
+  - **Portada PDF**: "Reporte de Monitoreo de Flota de Scorecards" → "Reporte de Monitoreo de Segmentos". También `<title>` HTML y label "Sub-scorecards monitoreados" → "Segmentos monitoreados".
+  - **Tests:** 100/100 verdes (12 en `test_decile_metrics.py`, 5 nuevos: `_window_weeks` × 3, agregación 4 semanas + exclusión de futuro × 1, idempotencia de persistencia × 1).
+  - **Verificación end-to-end**: `run_incremental_etl --date 2026-04-06` + `run_pipeline --date 2026-04-06 --no-email --no-llm` → PDF generado OK; query a `FACT_DECILES_HISTORY` muestra 3 targets × 11 segmentos × 10 deciles = 110 filas/target con ventanas de 4 semanas correctamente alineadas (`b_malo4_6` lag=6 → window 2026-02-02..2026-02-23).
+  - **Hallazgo abierto sobre PSI:** `variables_serc_*.csv` no tiene columna `flg_surtida`. Flow A NO filtra por surtidos (físicamente no puede). Pendiente verificar con upstream si el query SQL ya filtra a surtidos o si trae toda la población originada. Si filtra → pedir versión sin filtro para que PSI considere toda la población originada (incluyendo rechazados/no surtidos).
+
+- **PDF — i18n + heatmap + lógica de severidad** (`feature/new_psi_calculation`):
+  - **Badges en español:** `OK / ADVERTENCIA / CRÍTICO`. Etiquetas internas siguen en inglés (`alert_label` en DB, clases CSS); traducción solo en el render vía `STATUS_DISPLAY_ES` expuesto como global de Jinja en `report/renderer.py`. Templates `submodel_section.html` y `fleet_report.html` ahora usan `status_es[...]`. Encabezados "Warn"/"Crit" → "Adv."/"Crít.".
+  - **Heatmap "Métricas de negocio por bin":** color rojo (`rgba(239, 68, 68, α)`) → slate neutral (`rgba(71, 85, 105, α)`) en `metrics/business_metrics.py:124`. Razón: el rojo se leía como "malo" cuando solo comunica concentración.
+  - **Severidad escalada:** se reemplazó la regla "1 crítica en cualquier métrica → CRÍTICO" por dos categorías:
+    - *Headline* (`psi_score`, `gini_<primary>`, `ks_<primary>`): 1 crítica → CRÍTICO inmediato.
+    - *Agregables* (resto): 1 crítica → ADV, ≥3 críticas → CRÍTICO, ≥4 advertencias → ADV. Configurables en `config/settings.py` (`status_*_count_to_*`). `psi_max` excluida del conteo para no doble-contar. *(Umbrales actualizados 2026-05-05 a 3/5/8 — ver entrada de esa fecha.)*
+  - **`status_reason`:** nuevo campo en `SegmentMetrics`, render como nota corta junto al badge en metadata del segmento.
+  - **Tests:** 95/95 verdes. Nuevo `tests/test_status_aggregation.py` con 14 casos (headline, conteo, doble-conteo, casos de borde).
+  - **Verificación:** `poetry run python scripts/run_pipeline.py --date 2026-04-06 --no-email --no-llm` → PDF generado OK; HTML inspeccionado: aparecen `ADVERTENCIA`/`CRÍTICO`, ya no `WARNING`/`CRITICAL` crudos. business_table vacío esa semana (sin outcomes maduros), color slate validado por `test_business_metrics.py`.
+
+- **PSI y null_rate con ventana rodante de 4 semanas** (`src/mlmonitor/metrics/psi.py`). Antes, ambos comparaban una sola semana de `FACT_DISTRIBUTIONS` contra el baseline; ahora agregan `current_week + las 3 anteriores` por suma de `bin_count` (no promedio de porcentajes) y renormalizan. `null_rate = Σ null_count / Σ total_records` sobre la ventana, con `total_records` deduplicado por `(variable_id, origination_week)` antes de sumar entre semanas.
+- **Cobertura parcial** sin warning: si la ventana cubre <4 semanas (inicio del histórico, huecos), se usa lo que existe. Caso límite con 1 semana = comportamiento equivalente al cálculo single-week previo, lo que mantiene los tests de integración existentes pasando sin modificarlos.
+- **Firma pública preservada:** `get_psi_for_variable`, `get_psi_for_all_variables`, `get_null_rates` siguen funcionando con sus argumentos previos; nuevo kwarg opcional `window_weeks=PSI_WINDOW_WEEKS=4`. `MetricsCalculator` no requiere cambios.
+- **`compute_psi_from_df` intacta** — la función pura no cambia; toda la lógica nueva vive en el helper privado `_aggregate_distributions_over_window`.
+- **Tests:** 81/81 (75 previos + 6 nuevos en `tests/test_psi.py::TestRollingWindow`):
+  - helper de fechas (lunes ISO descendentes)
+  - cobertura parcial = single-week previo
+  - serie totalmente estable → PSI bajo
+  - spike en current_week con historia estable → PSI atenuado
+  - agregación suma `bin_count` (verificado con totales distintos: 4000 vs 1000)
+  - null_rate rodante = 0.05 vs 0.20 single-week
+- **ADR formal:** `docs/decisions.md §8.2.27` documenta motivación (varianza semana-a-semana), por qué suma de conteos > promedio de porcentajes, por qué 4 semanas, y alternativas descartadas (EMA, media de PSIs).
+- **Re-ingesta y recálculo de la semana 15-2026 (lunes 2026-04-06):**
+  - DELETE de `FACT_DISTRIBUTIONS`, `FACT_PERFORMANCE_BINNED`, `FACT_PERFORMANCE_INDIVIDUAL`, `FACT_METRICS_HISTORY` para esa semana (ETL ya había corrido).
+  - `poetry run python scripts/run_incremental_etl.py --date 2026-04-06`
+  - `poetry run python scripts/run_pipeline.py --date 2026-04-06 --no-email --no-llm`
+- Qué sigue:
+  - Validar que el cambio de PSI en producción reduce alertas ruidosas. Comparar 2-3 semanas históricas con la nueva métrica vs la vieja en notebook.
+  - Decidir si el ADR D6 (refresco del baseline) cambia con esta métrica: si el baseline se refresca con frecuencia, la ventana rodante interactúa con esa cadencia.
+
+---
+
 ## 2026-04-30
 
 - **Gráficas de deciles reales en el PDF.** La sección "Métricas de Negocio por Decil" en `submodel_section.html` realmente mostraba bines fijos de ancho 100 (no percentiles). Se renombró a `Métricas de negocio por bin de score (ancho fijo)` y se agregó debajo una nueva sección `Métricas de negocio por decil` con dos gráficas matplotlib por segmento:

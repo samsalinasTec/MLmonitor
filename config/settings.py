@@ -28,6 +28,11 @@ class Settings(BaseSettings):
     # Artifacts
     artifacts_dir: str = "artifacts"
 
+    # Severity aggregation — ver report.builder._aggregate_status
+    status_crit_count_to_critical: int = 8
+    status_crit_count_to_warning: int = 5
+    status_warn_count_to_warning: int = 8
+
     @property
     def reports_dir(self) -> Path:
         return Path(self.artifacts_dir) / "reports"

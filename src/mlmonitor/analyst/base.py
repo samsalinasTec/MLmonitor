@@ -61,6 +61,12 @@ class AnalysisContext:
     performance_weeks: dict[str, date] = field(default_factory=dict)  # {target_name: cutoff_date}
     latest_data_week: date | None = None  # ultima semana con datos en FACT_DISTRIBUTIONS
     data_lag_weeks: int | None = None     # semanas de desfase vs calendario actual
+    # Leyenda de severidad — explica al lector las reglas de _aggregate_status.
+    # Cada entrada: {"status": str, "label": str (ES), "rules": list[str]}.
+    severity_legend: list[dict] = field(default_factory=list)
+    # Gini/KS sobre la población combinada de TODOS los segmentos por target.
+    # Cada entrada: {"target", "origination_week", "gini", "ks", "auc", "n_obs"}.
+    global_performance: list[dict] = field(default_factory=list)
 
 
 @dataclass

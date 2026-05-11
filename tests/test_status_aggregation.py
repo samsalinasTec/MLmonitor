@@ -21,7 +21,12 @@ sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from config.settings import settings
-from mlmonitor.report.builder import _aggregate_status, _is_headline_alert
+from mlmonitor.report.builder import (
+    STATUS_DISPLAY_ES,
+    _aggregate_status,
+    _build_severity_legend,
+    _is_headline_alert,
+)
 
 PRIMARY = "b_malo8_13"
 
@@ -194,3 +199,45 @@ def test_gini_no_primario_es_agregable():
         assert not _is_headline_alert(a["metric"], PRIMARY)
     status, _ = _aggregate_status(alerts, PRIMARY)
     assert status == "WARNING"
+
+
+# ---------------------------------------------------------------------------
+# Leyenda de severidad (lo que ve el lector en el PDF)
+# ---------------------------------------------------------------------------
+
+
+def test_severity_legend_three_entries_in_order():
+    """La leyenda debe presentar CRITICAL → WARNING → OK (orden de severidad)."""
+    legend = _build_severity_legend()
+    assert [r["status"] for r in legend] == ["CRITICAL", "WARNING", "OK"]
+
+
+def test_severity_legend_uses_spanish_labels():
+    """Las labels son las traducciones canónicas de STATUS_DISPLAY_ES."""
+    legend = _build_severity_legend()
+    for row in legend:
+        assert row["label"] == STATUS_DISPLAY_ES[row["status"]]
+
+
+def test_severity_legend_critical_count_appears_in_text():
+    """Cualquier cambio a status_crit_count_to_critical debe reflejarse en la
+    leyenda automáticamente — verificamos que el entero actual aparece literal.
+    """
+    legend = _build_severity_legend()
+    crit_rules = " ".join(legend[0]["rules"])
+    assert str(settings.status_crit_count_to_critical) in crit_rules
+
+
+def test_severity_legend_warning_thresholds_appear_in_text():
+    """status_crit_count_to_warning y status_warn_count_to_warning deben
+    aparecer en la fila WARNING."""
+    legend = _build_severity_legend()
+    warn_rules = " ".join(legend[1]["rules"])
+    assert str(settings.status_crit_count_to_warning) in warn_rules
+    assert str(settings.status_warn_count_to_warning) in warn_rules
+
+
+def test_severity_legend_ok_has_one_rule():
+    """OK es el caso por descarte: una regla, breve."""
+    legend = _build_severity_legend()
+    assert len(legend[2]["rules"]) == 1

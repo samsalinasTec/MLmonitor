@@ -121,6 +121,45 @@ def _aggregate_status(
     return "OK", "sin alertas relevantes"
 
 
+def _build_severity_legend() -> list[dict]:
+    """Genera la leyenda de las reglas de _aggregate_status, leyendo umbrales
+    actuales de config.settings.
+
+    Mantener sincronizado con _aggregate_status: cualquier cambio a las reglas
+    debe reflejarse aquí. Los counts vienen de settings para que la leyenda
+    impresa siempre refleje la configuración real.
+    """
+    return [
+        {
+            "status": "CRITICAL",
+            "label": STATUS_DISPLAY_ES["CRITICAL"],
+            "rules": [
+                "1+ alerta crítica en métrica headline (PSI del score, "
+                "Gini o KS del target primario), o",
+                f"≥{settings.status_crit_count_to_critical} alertas críticas "
+                "agregadas (PSI por variable, null_rate, gini/ks de targets "
+                "secundarios, violaciones de orden).",
+            ],
+        },
+        {
+            "status": "WARNING",
+            "label": STATUS_DISPLAY_ES["WARNING"],
+            "rules": [
+                f"≥{settings.status_crit_count_to_warning} alertas críticas "
+                "agregadas, o",
+                "1+ headline en advertencia, o",
+                f"≥{settings.status_warn_count_to_warning} alertas en "
+                "advertencia agregadas.",
+            ],
+        },
+        {
+            "status": "OK",
+            "label": STATUS_DISPLAY_ES["OK"],
+            "rules": ["Ninguna de las condiciones anteriores se cumple."],
+        },
+    ]
+
+
 def _classify_alert(
     key: str,
     metric_name: str,
@@ -313,6 +352,7 @@ class ReportBuilder:
             performance_coverage=performance_coverage,
             performance_weeks=performance_weeks,
             primary_target=resolved_primary_target,
+            severity_legend=_build_severity_legend(),
         )
 
         # Llamada al LLM si hay analista

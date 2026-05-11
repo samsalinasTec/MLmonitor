@@ -57,3 +57,17 @@ Cada item indica: contexto mínimo, por qué importa, y criterio de hecho.
 **Por qué:** Hoy no hay CI que verifique que `poetry install --only main` alcanza para ejecutar bootstrap + ETL. Un import accidental desde `mlmonitor.data.*` hacia `mlmonitor.report.*` (grupo `pipeline`) pasaría desapercibido hasta el deploy.
 
 **Criterio de hecho:** Workflow que corra dos jobs: (a) `poetry install --only main` + `python -c "from mlmonitor.data import bootstrap, incremental_etl"` + tests que no dependen de `pipeline`; (b) `poetry install --with pipeline` + `poetry run pytest` completo.
+
+---
+
+## 6. Persistencia del Gini/KS global (`FACT_GLOBAL_METRICS`)
+
+**Contexto:** En la iteración 2 (2026-05-10) se agregó al PDF la sección "Métricas Globales por Target" — Gini/KS/n_obs computados sobre la población combinada de todos los segmentos para una `origination_week` (= `calculation_week - lag`). Hoy se calcula al vuelo en `ReportBuilder.build()` vía `get_gini_ks_global()` y se descarta tras renderizar. No se persiste porque `FactMetricsHistory.model_registry_id` es `NOT NULL` y no encaja semánticamente "global = sin segmento".
+
+**Por qué:** Sin persistencia no hay histórico semanal del global. Para tendencias agregadas (¿el modelo entero está degradándose?) toca recalcular desde `FACT_PERFORMANCE_INDIVIDUAL` cada vez, y los datos crudos pueden purgarse antes de que se hagan los análisis. También bloquea poner el global como serie en dashboards.
+
+**Opciones:**
+- (A) Nueva tabla `FACT_GLOBAL_METRICS` con `(model_id, calculation_week, target_variable)` como unique. Columnas: `gini, ks, auc, n_obs, origination_week`. Pro: separación limpia entre métricas por-segmento y agregadas. Contra: una tabla más para mantener.
+- (B) Hacer `FactMetricsHistory.model_registry_id` nullable y usar `NULL` para "global". Pro: una sola tabla, queries uniformes. Contra: rompe convenciones existentes y filtros por segmento necesitan `WHERE model_registry_id IS NOT NULL`.
+
+**Criterio de hecho:** ADR documentando la opción elegida, migración del schema, calculator (o builder) persiste el global tras computarlo, builder lo lee de DB en lugar de recomputarlo, test que valide idempotencia (re-run no duplica), entrada en `data_model.md` describiendo la nueva tabla/columna. Nota: AUC es derivable de Gini (`AUC = (Gini + 1) / 2`), no hace falta persistirlo aparte; mantenerlo solo en render del PDF.

@@ -317,3 +317,118 @@ def persist_deciles_history(
         session.add_all(rows)
         session.flush()
     return len(rows)
+
+
+def check_decile_ordering_violations(
+    decile_table: pd.DataFrame,
+    ascending: bool,
+    tol: float = 0.005,
+) -> dict:
+    """Cuenta violaciones de monotonía sobre event_rate ordenado por decil.
+
+    Convención de deciles (ver get_decile_data_for_segment): decile 1 = scores
+    más bajos = mayor riesgo. Para targets de incumplimiento (ascending=False)
+    el event_rate debe DECRECER conforme decile sube. Para targets crecientes
+    (ascending=True) debe CRECER.
+
+    Tolerancia: diferencias menores a `tol` en valor absoluto no se cuentan
+    (ruido). Mismo umbral histórico que la versión sobre bins fijos.
+
+    Args:
+        decile_table: DataFrame con columnas `decile` y `event_rate` (al menos).
+        ascending: True si event_rate debe crecer con decile, False si debe decrecer.
+        tol: tolerancia para considerar una diferencia como ruido.
+
+    Returns:
+        {"violations": int, "violation_pairs": [
+            {decile_low, decile_high, value_low, value_high}, ...
+        ]}
+    """
+    if decile_table is None or decile_table.empty:
+        return {"violations": 0, "violation_pairs": []}
+
+    df = decile_table.sort_values("decile").reset_index(drop=True)
+    deciles = df["decile"].tolist()
+    values = df["event_rate"].tolist()
+
+    violations = 0
+    violation_pairs: list[dict] = []
+    for i in range(len(values) - 1):
+        v_i = values[i]
+        v_j = values[i + 1]
+        if v_i is None or v_j is None or pd.isna(v_i) or pd.isna(v_j):
+            continue
+
+        is_violation = (
+            v_j < v_i - tol if ascending else v_j > v_i + tol
+        )
+        if is_violation:
+            violations += 1
+            violation_pairs.append({
+                "decile_low": int(deciles[i]),
+                "decile_high": int(deciles[i + 1]),
+                "value_low": round(float(v_i), 4),
+                "value_high": round(float(v_j), 4),
+            })
+
+    return {"violations": violations, "violation_pairs": violation_pairs}
+
+
+def load_per_target_deciles(
+    session: Session,
+    model_registry_id: int,
+    calculation_week: date,
+) -> dict[str, dict]:
+    """Reconstruye el bloque per_target del dict de get_decile_data_for_segment
+    leyendo de FACT_DECILES_HISTORY (sin tocar FACT_PERFORMANCE_INDIVIDUAL).
+
+    Para cada target persistido, devuelve un sub-dict con la misma forma que
+    el original: cohort_window_start/end, decile_table como DataFrame, y
+    available=True. Los targets sin filas no aparecen en el dict (igual que
+    el comportamiento original cuando no hay datos).
+
+    Returns:
+        {tname: {cohort_week, cohort_window_start, cohort_window_end,
+                decile_table: pd.DataFrame, available: True, reason: None}}
+    """
+    rows = (
+        session.query(FactDecilesHistory)
+        .filter(
+            FactDecilesHistory.model_registry_id == model_registry_id,
+            FactDecilesHistory.calculation_week == calculation_week,
+        )
+        .all()
+    )
+    if not rows:
+        return {}
+
+    by_target: dict[str, list] = {}
+    for r in rows:
+        by_target.setdefault(r.target_variable, []).append(r)
+
+    out: dict[str, dict] = {}
+    for tname, trows in by_target.items():
+        trows_sorted = sorted(trows, key=lambda r: r.decile)
+        df = pd.DataFrame([
+            {
+                "decile": r.decile,
+                "score_min": r.score_min,
+                "score_max": r.score_max,
+                "score_mean": r.score_mean,
+                "n_total": r.n_obs,
+                "n_event": r.n_events,
+                "event_rate": r.event_rate,
+                "pct_population": r.pct_population,
+            }
+            for r in trows_sorted
+        ])
+        first = trows_sorted[0]
+        out[tname] = {
+            "cohort_week": first.cohort_window_end,
+            "cohort_window_start": first.cohort_window_start,
+            "cohort_window_end": first.cohort_window_end,
+            "decile_table": df,
+            "available": True,
+            "reason": None,
+        }
+    return out

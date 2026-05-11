@@ -18,7 +18,11 @@ from mlmonitor.db.models import (
     MetaModelRegistry,
     MetaVariables,
 )
-from mlmonitor.metrics.business_metrics import get_ordering_violations_for_metric
+from mlmonitor.metrics.decile_metrics import (
+    check_decile_ordering_violations,
+    get_decile_data_for_segment,
+    persist_deciles_history,
+)
 from mlmonitor.metrics.performance import get_gini_ks_for_segment
 from mlmonitor.metrics.psi import get_max_psi, get_null_rates, get_psi_for_all_variables
 
@@ -135,12 +139,30 @@ class MetricsCalculator:
             variable_map = {v.id: v.variable_name for v in var_rows if v.variable_rol != "target"}
             target_vars = [v for v in var_rows if v.variable_rol == "target"]
 
+            # Resolver lag del target primario para anclar la cohorte de deciles.
+            # Espejo de la lógica de report/builder.py:_build_decile_charts:
+            # 1) si MetaModelRegistry.primary_target_variable está activo en este
+            #    segmento, usar su lag; 2) si no, usar el lag del primer target
+            #    (los targets se ordenan por declaración en META_VARIABLES).
+            primary_name = seg.primary_target_variable
+            primary = next(
+                (t for t in target_vars if t.variable_name == primary_name),
+                None,
+            )
+            if primary is not None:
+                primary_target_lag = primary.lag_semanas or 0
+            elif target_vars:
+                primary_target_lag = target_vars[0].lag_semanas or 0
+            else:
+                primary_target_lag = 0
+
             rows = self._calculate_segment_metrics(
                 model_registry_id=model_registry_id,
                 variable_map=variable_map,
                 target_vars=target_vars,
                 current_week=current_week,
                 score_max=seg.score_max or 1000,
+                primary_target_lag=primary_target_lag,
             )
             all_rows.extend(rows)
 
@@ -174,11 +196,28 @@ class MetricsCalculator:
         target_vars: list[MetaVariables],
         current_week: date,
         score_max: int = 1000,
+        primary_target_lag: int = 0,
     ) -> list[FactMetricsHistory]:
         rows = []
 
         # Invertir para lookup var_name → var_id
         name_to_id = {v: k for k, v in variable_map.items()}
+
+        # Deciles per-target: cálculo único, persistencia en FACT_DECILES_HISTORY.
+        # Se reutiliza el dict en memoria para detectar violaciones de orden
+        # (sobre event_rate decil-a-decil) y el builder del PDF lo lee de DB
+        # para renderizar las gráficas. La fuente única evita divergencia entre
+        # la métrica reportada y la gráfica que la motiva.
+        decile_data = get_decile_data_for_segment(
+            self.session,
+            model_registry_id,
+            current_week,
+            primary_target_lag,
+            target_vars,
+        )
+        persist_deciles_history(
+            self.session, model_registry_id, current_week, decile_data,
+        )
 
         # --- PSI por variable (solo inputs/outputs) ---
         psi_by_var = get_psi_for_all_variables(
@@ -285,11 +324,21 @@ class MetricsCalculator:
                         calculated_from="FACT_PERFORMANCE_INDIVIDUAL",
                     ))
 
-            violations = get_ordering_violations_for_metric(
-                self.session, model_registry_id, origination_week,
-                metric_type=tname,
-                ascending=ascending,
-            )
+            # Violaciones de orden sobre deciles (no sobre bins fijos de score).
+            # decile_data lo computamos arriba; aquí solo extraemos la tabla del
+            # target. Si no hay deciles (cohorte sin datos o n<min_obs), 0 viol.
+            pt_entry = decile_data["per_target"].get(tname, {})
+            decile_table = pt_entry.get("decile_table")
+            if decile_table is not None and not decile_table.empty:
+                violations = check_decile_ordering_violations(
+                    decile_table, ascending=ascending,
+                )
+                window_start = pt_entry.get("cohort_window_start")
+                window_end = pt_entry.get("cohort_window_end")
+            else:
+                violations = {"violations": 0, "violation_pairs": []}
+                window_start = None
+                window_end = None
             n_v = violations.get("violations", 0)
             mname = f"ordering_violations_{tname}"
             _, label = self.evaluator.evaluate(mname, n_v, model_registry_id)
@@ -303,11 +352,12 @@ class MetricsCalculator:
                     metric_value=float(n_v),
                     alert_label=label,
                     details={
-                        "origination_week": origination_week.isoformat(),
                         "target": tname,
+                        "cohort_window_start": window_start.isoformat() if window_start else None,
+                        "cohort_window_end": window_end.isoformat() if window_end else None,
                         "violation_pairs": violations.get("violation_pairs", []),
                     },
-                    calculated_from="FACT_PERFORMANCE_BINNED",
+                    calculated_from="FACT_DECILES_HISTORY",
                 ))
 
         return rows

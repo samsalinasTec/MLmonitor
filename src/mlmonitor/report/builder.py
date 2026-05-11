@@ -23,10 +23,7 @@ from mlmonitor.db.models import (
     MetaVariables,
 )
 from mlmonitor.metrics.business_metrics import get_business_metrics_table
-from mlmonitor.metrics.decile_metrics import (
-    get_decile_data_for_segment,
-    persist_deciles_history,
-)
+from mlmonitor.metrics.decile_metrics import load_per_target_deciles
 from mlmonitor.report.charts import (
     render_consolidated_decile_chart,
     render_per_target_decile_chart,
@@ -518,52 +515,39 @@ class ReportBuilder:
         calculation_week: date,
         primary_target: str,
     ) -> dict:
-        """Genera las dos gráficas de deciles (consolidada + por target) en base64."""
-        primary = next(
-            (t for t in target_vars if t.variable_name == primary_target),
-            None,
-        )
-        if primary is not None:
-            primary_lag = primary.lag_semanas or 0
-        elif target_vars:
-            primary_lag = target_vars[0].lag_semanas or 0
-        else:
-            primary_lag = 0
+        """Genera las dos gráficas de deciles leyendo FACT_DECILES_HISTORY.
 
-        decile_data = get_decile_data_for_segment(
+        La persistencia la hace el calculator (un solo cálculo por segmento por
+        semana). Aquí solo se renderizan. La gráfica "consolidada" se construye
+        a partir de los deciles del target primario más las event_rates de los
+        otros targets en los mismos rangos de score (best-effort: si los
+        score_min/max no alinean, se omiten esos targets adicionales).
+        """
+        pt_data = load_per_target_deciles(
             session=self.session,
             model_registry_id=model_registry_id,
             calculation_week=calculation_week,
-            primary_target_lag=primary_lag,
-            all_targets=target_vars,
         )
 
-        persist_deciles_history(
-            session=self.session,
-            model_registry_id=model_registry_id,
-            calculation_week=calculation_week,
-            decile_data=decile_data,
-        )
+        # Per-target payload: shape compatible con render_per_target_decile_chart.
+        # Targets sin deciles persistidos quedan marcados como no disponibles.
+        per_target_full: dict[str, dict] = {}
+        for t in target_vars:
+            tname = t.variable_name
+            if tname in pt_data:
+                per_target_full[tname] = pt_data[tname]
+            else:
+                cohort = calculation_week - timedelta(weeks=t.lag_semanas or 0)
+                per_target_full[tname] = {
+                    "cohort_week": cohort,
+                    "cohort_window_start": cohort,
+                    "cohort_window_end": cohort,
+                    "decile_table": None,
+                    "available": False,
+                    "reason": "Sin deciles persistidos para esta cohorte",
+                }
 
-        cons = decile_data["consolidated"]
-        consolidated_payload = {
-            "available": cons["available"],
-            "img_b64": None,
-            "reason": None if cons["available"] else "Sin datos suficientes en la cohorte primaria",
-            "cohort_week": cons["cohort_week"].isoformat(),
-            "missing_targets": cons["missing_targets"],
-        }
-        if cons["available"]:
-            consolidated_payload["img_b64"] = render_consolidated_decile_chart(
-                decile_table=cons["decile_table"],
-                rates_by_target=cons["rates_by_target"],
-                cohort_week=cons["cohort_week"],
-                primary_target=primary_target,
-                segment_id=segment_id,
-            )
-
-        pt_data = decile_data["per_target"]
-        pt_available = any(p["available"] for p in pt_data.values())
+        pt_available = any(p["available"] for p in per_target_full.values())
         pt_payload = {
             "available": pt_available,
             "img_b64": None,
@@ -574,13 +558,59 @@ class ReportBuilder:
                     "available": p["available"],
                     "cohort_week": p["cohort_week"].isoformat(),
                 }
-                for t, p in pt_data.items()
+                for t, p in per_target_full.items()
             ],
         }
         if pt_available:
             pt_payload["img_b64"] = render_per_target_decile_chart(
-                per_target=pt_data,
+                per_target=per_target_full,
                 segment_id=segment_id,
             )
+
+        # Consolidada: anclada en los deciles del target primario.
+        primary_entry = pt_data.get(primary_target)
+        if primary_entry is not None and primary_entry.get("available"):
+            base_table = primary_entry["decile_table"]
+            rates_by_target = {
+                primary_target: base_table["event_rate"].tolist(),
+            }
+            consolidated_payload = {
+                "available": True,
+                "img_b64": render_consolidated_decile_chart(
+                    decile_table=base_table,
+                    rates_by_target=rates_by_target,
+                    cohort_week=primary_entry["cohort_window_end"],
+                    primary_target=primary_target,
+                    segment_id=segment_id,
+                ),
+                "reason": None,
+                "cohort_week": primary_entry["cohort_window_end"].isoformat(),
+                "missing_targets": [
+                    t.variable_name for t in target_vars
+                    if t.variable_name != primary_target
+                    and (t.lag_semanas or 0) > (
+                        next(
+                            (x.lag_semanas or 0 for x in target_vars
+                             if x.variable_name == primary_target),
+                            0,
+                        )
+                    )
+                ],
+            }
+        else:
+            cohort_fallback = calculation_week - timedelta(
+                weeks=next(
+                    (t.lag_semanas or 0 for t in target_vars
+                     if t.variable_name == primary_target),
+                    0,
+                )
+            )
+            consolidated_payload = {
+                "available": False,
+                "img_b64": None,
+                "reason": "Sin deciles persistidos del target primario",
+                "cohort_week": cohort_fallback.isoformat(),
+                "missing_targets": [],
+            }
 
         return {"consolidated": consolidated_payload, "per_target": pt_payload}

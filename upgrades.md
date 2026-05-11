@@ -652,11 +652,21 @@ Trazabilidad de qué items de este documento ya quedaron cerrados, parcialmente 
 - [ ] Drop+rebuild en RDS productivo + re-bootstrap + backfill (autorización del usuario; difertido hasta cerrar más desarrollo local).
 - [ ] Smoke test en ECS Fargate con la imagen actualizada.
 
-### Iteración 2 — Pendiente (P1)
+### Iteración 2 — Limpieza estructural (cerrada 2026-05-11)
 
-- [ ] **A3** — Reglas de agregación de severidad (`status_*_count_*`) a tabla `META_AGGREGATION_RULES`. Hoy viven en `config/settings.py`; deben ser por-modelo y versionadas.
-- [ ] **A4** — Promover otros magic numbers a config: `MISSING_SENTINEL` por variable en `META_VARIABLES`, `DECILE_MIN_OBS` por modelo, `PSI_WINDOW_WEEKS` / `DECILE_WINDOW_WEEKS` si se valida que dependen del modelo. (`MISSING_SENTINEL` y `NUM_BINS_NUMERIC` ya quedaron por-modelo dentro de A6 al persistirse en `config.json`; lo que queda es por-variable.)
-- [ ] **D7** — Consolidar `bootstrap.py` y `bootstrap_v2.py` en un único bootstrap (V2 ya es oficial). Ahora es trivial porque la lógica del baseline está acoplada al config del modelo.
+Ámbito: sacar configuración de severidad y ventanas de cómputo del código, consolidar el bootstrap V1+V2. Verificada localmente con suite 158/158 + drop+rebuild + ETL ventana rodante (4 semanas 2026-03-16..2026-04-06) + pipeline end-to-end.
+
+- [x] **A3** — Reglas de agregación de severidad (`status_*_count_*`) movidas de `config/settings.py` a nueva tabla SCD2 `META_AGGREGATION_RULES`. Resolver `data/aggregation_rules.py::load_aggregation_rules` con precedencia specific → global → defaults Python (mismo patrón que `AlertEvaluator.get_threshold`). Seed idempotente en bootstrap (`seed_default_global_rules`, valid_from=2025-01-01). `_aggregate_status` y `_build_severity_legend` aceptan el dict resuelto.
+- [x] **A4** — `psi_window_weeks`, `decile_window_weeks`, `decile_min_obs`, `n_deciles`, `baseline_year`, `baseline_n_weeks` movidos a `ModelConfig` con defaults vía `data.get(..., default)` (backwards-compat, sin tocar `required`). `MetricsCalculator(session, config=...)` los lee y los pasa a `get_psi_for_all_variables`, `get_null_rates`, `get_decile_data_for_segment` (firma ampliada con `n_deciles` y `window_weeks`). Constantes de módulo se mantienen como defaults de kwarg.
+- [x] **MISSING_SENTINEL** — Descartado per-variable: se queda model-wide en `ModelConfig.missing_sentinel` (config.json). Razones documentadas en `devlog.md` (2026-05-11): es marcador, no valor; uniforme del extract upstream; sin colisiones en BAZBOOST_V1. YAGNI hasta que un modelo legítimamente lo necesite.
+- [x] **D7** — `bootstrap.py` y `bootstrap_v2.py` consolidados en un solo `ModelBootstrap` con el baseline V2 (variables_serc, oficial per ADR §8.2.29). Path WIDE (`base_train_test_bb.csv`) retirado del código (recuperable desde git si fuera necesario). `scripts/run_bootstrap_v2.py` eliminado; `scripts/run_bootstrap.py` absorbió los flags `--year`, `--n-weeks`, `--variables-serc-file`.
+
+**Tests:** suite final 158 passed (+11 vs cierre Iter 1): +8 nuevos en `test_aggregation_rules.py`, +3 en `test_model_config.py` para los campos A4. `test_status_aggregation.py` adaptado para parametrizar desde `DEFAULT_AGGREGATION_RULES` en vez de `settings`. `conftest.py` siembra reglas globales en el fixture `populated_engine`.
+
+**Pendiente operativo (fuera de scope de código local):**
+- [ ] Drop+rebuild en RDS productivo + re-bootstrap + backfill (autorización del usuario).
+- [ ] Smoke test en ECS Fargate con la imagen actualizada.
+- [ ] (Deuda menor) Limpiar `status_*_count_*` de `config/settings.py` una vez verificado que nada los lee directamente — dejados un tiempo como red de seguridad.
 
 ### Iteración 3 — BI / observabilidad (P1)
 

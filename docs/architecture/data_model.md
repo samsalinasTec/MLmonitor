@@ -133,7 +133,11 @@ Típicamente ambas coinciden (se surte poco después de scorear), pero no son el
 
 ### 1.7 `MISSING_SENTINEL = -100`
 
-Valor reservado para nulos en variables numéricas del scorecard. No se confunde con `NaN` porque los CSVs raw pueden traer el string `"-100"` literal. Vive en `bootstrap.py` e `incremental_etl.py`.
+Valor reservado para nulos en variables numéricas del scorecard. No se confunde con `NaN` porque los CSVs raw pueden traer el string `"-100"` literal.
+
+Es **model-wide**: vive en `data/inputs/model_configs/<model_id>/config.json` y se carga en `ModelConfig.missing_sentinel` (`src/mlmonitor/data/model_config.py`). El bootstrap y el ETL lo leen vía `self.config.missing_sentinel` (cero hardcode en código de runtime).
+
+Iteración 2 evaluó promoverlo a per-variable en `META_VARIABLES` y lo **descartó** (ADR §8.2.31): el sentinel es un marcador del extract upstream uniforme — se filtra antes del binning y nunca participa en cálculos. Para BAZBOOST_V1 todas las variables comparten el mismo valor; per-variable sería sobre-diseño hasta que aparezca un modelo con sentinel mixto.
 
 ### 1.8 Score invertido para Gini/KS
 
@@ -202,7 +206,27 @@ Columnas clave:
 
 El evaluador en `metrics/calculator.py::AlertEvaluator` busca por `(metric_name, model_registry_id)` y cae al global (`model_registry_id IS NULL`) si no existe — fallback que hoy queda inactivo (no se insertan globales) pero se preserva para futuras métricas globales explícitas. El acoplamiento `metric_id` ↔ SCD2 de thresholds es deuda conocida — ver [`../backlog.md`](../backlog.md) §4.
 
-### 2.4 `META_BASELINE_DISTRIBUTIONS`
+### 2.4 `META_AGGREGATION_RULES`
+
+Reglas de agregación de severidad (`status_*_count_*`). SCD2 por `(model_registry_id, rule_name, valid_from)`. Introducida en Iteración 2 (ADR §8.2.31); antes estas constantes vivían en `config/settings.py` sin auditoría ni override por modelo.
+
+Columnas clave:
+
+- `model_registry_id` (FK, **nullable**): `NULL` = regla global (aplica a todos los modelos); valor poblado = override por modelo.
+- `rule_name` (str): nombre canónico (`status_crit_count_to_critical`, `status_crit_count_to_warning`, `status_warn_count_to_warning`).
+- `rule_value` (float): valor del umbral. Float para tolerar reglas no-enteras a futuro (ej. ratios), aunque hoy todas son conteos enteros.
+- `description` (str, opcional): explicación humana persistida junto con el seed.
+
+Resolución (`src/mlmonitor/data/aggregation_rules.py::load_aggregation_rules`):
+1. Fila específica del modelo activa → usar.
+2. Fila global activa → usar.
+3. `DEFAULT_AGGREGATION_RULES` Python (red de seguridad con `logger.warning`).
+
+Patrón calcado de `AlertEvaluator.get_threshold` (`metrics/calculator.py:51`).
+
+Seed: `seed_default_global_rules(session, valid_from=date(2025, 1, 1))` invocado idempotentemente desde `ModelBootstrap._populate_meta_aggregation_rules`. Las 3 reglas se siembran como globales con los valores actuales (8/5/8 tras el ajuste de 2026-05-05).
+
+### 2.5 `META_BASELINE_DISTRIBUTIONS`
 
 Distribuciones de referencia del baseline de entrenamiento. Una sola fila por `(model_registry_id, variable_id, bin_label)`.
 
@@ -383,13 +407,15 @@ Las métricas se dividen en dos categorías:
   → No → OK
 ```
 
-Los umbrales de conteo son configurables en `config/settings.py`:
+Los umbrales de conteo viven en `META_AGGREGATION_RULES` (ver §2.4) y se resuelven una sola vez por reporte vía `mlmonitor.data.aggregation_rules.load_aggregation_rules(session)`. Valores actuales (sembrados como globales):
 
-| Setting | Valor | Efecto |
+| Regla | Valor | Efecto |
 |---|---|---|
-| `status_crit_count_to_critical` | 5 | ≥5 críticas agregables → CRITICAL |
-| `status_crit_count_to_warning` | 3 | ≥3 críticas agregables → WARNING |
+| `status_crit_count_to_critical` | 8 | ≥8 críticas agregables → CRITICAL |
+| `status_crit_count_to_warning` | 5 | ≥5 críticas agregables → WARNING |
 | `status_warn_count_to_warning` | 8 | ≥8 warnings agregables → WARNING |
+
+Cualquier cambio se inserta como nueva versión SCD2 (cerrar `valid_to` de la anterior + insertar nueva con `valid_from`). El resolver acepta `as_of` para reconstruir el estado vigente en una fecha histórica — útil para reproducir un PDF de hace meses bajo sus reglas originales.
 
 El campo `status_reason` en `SegmentMetrics` explica la razón del estado asignado (ej. `"headline crítico (PSI)"`, `"3 crítica(s) agregada(s); 2 headline en advertencia"`).
 

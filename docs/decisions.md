@@ -642,3 +642,97 @@ Para incorporar un segundo modelo (objetivo cercano del proyecto, ver §8.2.20 y
 - Smoke test del pipeline en producción: `aws ecs run-task` con `RUN_DATE` para una semana conocida.
 - Commit final de la iteración 1 (A1+A2+A5+A6+fix tests+ADR §8.2.30+devlog).
 - Una vez validado, empezar la iteración 2 con A3 (reglas de agregación a tabla) o D7 (consolidar bootstrap+bootstrap_v2) según prioridad.
+
+
+## §8.2.31 Iteración 2 — Reglas de agregación a tabla SCD2, ventanas a `ModelConfig`, consolidación de bootstrap
+
+**Fecha:** 2026-05-11 · **Estado:** Aceptado · **Supersede:** §8.2.29 (parte "consolidar `bootstrap.py` y `bootstrap_v2.py` cuando V2 esté validado en RDS" — deuda registrada que cierra aquí). Complementa §8.2.30 (configuración por modelo externalizada).
+
+**Contexto.** Tras Iteración 1 (§8.2.30), tres bloques de configuración seguían en código duro o en `config/settings.py`, fuera del modelo de datos:
+
+1. **Reglas de agregación de severidad (`status_*_count_*`).** Vivían en `config/settings.py:32-34`. El cambio del 2026-05-05 (umbrales 1/3/4 → 8/5/8, registrado en devlog pero no en DB) no era reproducible: un PDF de hace tres meses no se podía regenerar bajo sus reglas originales porque settings sólo guarda el valor "ahora".
+2. **Ventanas y umbrales de cómputo** (`PSI_WINDOW_WEEKS=4`, `DECILE_WINDOW_WEEKS=4`, `DECILE_MIN_OBS=100`, `N_DECILES=10`) como constantes módulo en `metrics/psi.py` y `metrics/decile_metrics.py`. Cada modelo nuevo querrá ajustarlos (modelos de cartera comercial chica vs scoring de masa; cadencia semanal vs mensual). El `decisions.md §8.2.26` ya anticipaba "mover a tabla cuando un segmento legítimamente lo necesite" — ese momento llega antes con el segundo modelo, no después.
+3. **`bootstrap.py` y `bootstrap_v2.py` coexistiendo.** §8.2.29 los dejó como deuda explícita: V2 oficial pero V1 vivo "por si acaso". Riesgo de cambios al V1 que se olviden de aplicar a V2, 80% de código duplicado, confusión para colaboradores nuevos.
+
+Además, `upgrades.md` proponía promover `MISSING_SENTINEL` a per-variable en `META_VARIABLES` (con default −100, "modelos de otra fuente pueden usar otro sentinel"). En sesión 2026-05-11 el usuario lo cuestionó: ¿aplica realmente por variable o es uniforme model-wide? Tras revisar el código (es un marcador filtrado antes del binning, no participa en cálculos, sin colisiones en BAZBOOST_V1) se decidió **NO** promoverlo.
+
+**Decisión.**
+
+1. **Nueva tabla `META_AGGREGATION_RULES` (SCD2).** Columnas: `id`, `model_registry_id` (FK nullable a `META_MODEL_REGISTRY.id`; `NULL` = regla global), `rule_name` (`String(100)`), `rule_value` (`Float`), `description` (`String(200)`, opcional), `valid_from` (`Date`, requerida), `valid_to` (`Date`, nullable; `NULL` = vigente), `created_at`. `UniqueConstraint(model_registry_id, rule_name, valid_from)` calcado de `MetaMetricThresholds`. Aplicada como cambio del schema (modelo de datos congelado per CLAUDE.md §3; este ADR es la autorización explícita).
+
+2. **Nuevo módulo `src/mlmonitor/data/aggregation_rules.py`** con:
+   - `DEFAULT_AGGREGATION_RULES`: dict Python con los 3 valores actuales (8/5/8). Última red de seguridad — fallback con `logger.warning` cuando la tabla está vacía (tests sin seed, instalaciones nuevas pre-bootstrap).
+   - `load_aggregation_rules(session, model_registry_id=None, as_of=None)`: resolver con precedencia **specific → global → defaults Python**. Mismo patrón que `AlertEvaluator.get_threshold` en `metrics/calculator.py:51`. `as_of` permite reconstruir el estado vigente en una fecha histórica.
+   - `seed_default_global_rules(session, valid_from)`: idempotente — invocado desde `ModelBootstrap._populate_meta_aggregation_rules` con `valid_from=date(2025, 1, 1)`. Si ya hay filas globales vigentes para una regla, no la duplica.
+
+3. **`_aggregate_status` y `_build_severity_legend` reciben el dict resuelto.** `ReportBuilder.build()` llama al resolver una sola vez por run y threadea el dict a cada `_build_segment_metrics` y al `severity_legend` del `AnalysisContext`. Las firmas mantienen `rules: dict | None = None` con fallback a `DEFAULT_AGGREGATION_RULES` para tests legados que las invocan directamente.
+
+4. **Atributos `status_*_count_*` eliminados de `Settings`.** `config/settings.py` queda con la responsabilidad estricta de infraestructura (DB URL, AWS region, paths, emails) — no de parámetros de evaluación de salud.
+
+5. **Ventanas y umbrales de cómputo a `ModelConfig`.** 6 campos nuevos con defaults vía `data.get(..., default)` en `from_json_file` (backwards-compat sin tocar `required`):
+   - `psi_window_weeks: int = 4`
+   - `decile_window_weeks: int = 4`
+   - `decile_min_obs: int = 100`
+   - `n_deciles: int = 10`
+   - `baseline_year: int = 2026`
+   - `baseline_n_weeks: int = 4`
+   
+   El `config.json` de BAZBOOST_V1 los declara explícitos. Las constantes módulo (`PSI_WINDOW_WEEKS`, etc.) se conservan como defaults de kwarg de las funciones puras — preserva tests que las importan directo y permite override granular.
+
+6. **`get_decile_data_for_segment` con firma ampliada** (`n_deciles`, `window_weeks`): antes hardcodeaba `N_DECILES` y `DECILE_WINDOW_WEEKS` internamente.
+
+7. **`MetricsCalculator(session, config: ModelConfig | None = None)`** acepta el config y lo threadea a `get_psi_for_all_variables`, `get_null_rates`, `get_decile_data_for_segment`. Config opcional para preservar tests legados; el `PipelineOrchestrator` carga `ModelConfig.for_model(model_id)` y lo inyecta.
+
+8. **Consolidación bootstrap.** `ModelBootstrapV2(ModelBootstrap)` absorbido al padre. El único path de baseline es ahora el SERC (`variables_serc_*.csv`), oficial per §8.2.29. Métodos absorbidos: `_resolve_variables_serc_path`, `_baseline_weeks`, `_load_serc_baseline_window`, `_baseline_variable_distributions` (versión SERC), `_baseline_score_distributions` (versión SERC), `_bin_numeric_baseline` (versión SERC). El path WIDE legacy (`base_train_test_bb.csv`) queda retirado del código — recuperable desde git si fuera necesario. `_bin_categorical_baseline` se conserva (lo reusa V2). `__init__` acepta `variables_serc_filename`, `baseline_year`, `baseline_n_weeks` (los dos últimos opcionales: caen a `config.baseline_year`/`baseline_n_weeks` si el caller no los pasa).
+
+9. **Eliminados:** `src/mlmonitor/data/bootstrap_v2.py`, `scripts/run_bootstrap_v2.py`. `scripts/run_bootstrap.py` absorbió los flags `--year`, `--n-weeks`, `--variables-serc-file` (drop `--baseline-file`). `model_registry.py:49` referencia el script único. CLAUDE.md §5 actualizado.
+
+10. **`MISSING_SENTINEL` queda model-wide en `ModelConfig.missing_sentinel`** (donde ya vive desde §8.2.30). Se descarta promoverlo a per-variable.
+
+**Razones.**
+
+- **Auditabilidad sobre comodidad.** Las reglas de severidad son configuración de negocio, no de infraestructura. Versionarlas en SCD2 mantiene la trazabilidad ("¿por qué ese PDF de febrero dice CRITICAL si el segmento hoy está OK con los nuevos umbrales?"), elimina la asimetría de tener métricas históricas con reglas no reconstruibles, y prepara override por modelo sin código condicional.
+- **Resolver calcado en lugar de inventado.** El patrón specific → global → default Python ya está validado en `AlertEvaluator.get_threshold`. Mantener la convención reduce carga cognitiva y bug surface.
+- **Defaults Python como red de seguridad.** Tres lugares posibles para los valores: settings (descartado, no auditable), tabla (válido, pero falla en DB vacía), constante Python (red de seguridad). Combinar tabla + Python defaults da auditabilidad sin frágil dependencia de "el seed corrió" — un test puro o una instalación nueva pre-bootstrap caen al default con warning visible, no a `KeyError`.
+- **`model_registry_id` nullable apuntando a un segmento.** Hoy `META_MODEL_REGISTRY` tiene una fila por **segmento** del modelo. La regla aplica fleet-level (ver `_aggregate_status` — opera sobre las alertas del segmento pero la política de conteo no es segmento-específica), por eso el seed es global (`NULL`). Si en el futuro un segmento necesita reglas distintas (poco probable), basta poblar el FK al `id` específico. Alternativa "FK a un nuevo `META_MODELS` cuando se haga §B5" descartada por no acoplar Iter 2 a una refactor pendiente.
+- **Ventanas como defaults opcionales con override por JSON.** Mantener `PSI_WINDOW_WEEKS = 4` en `psi.py` permite que funciones puras (`compute_psi_from_df`, tests) sigan funcionando sin instanciar `ModelConfig`. El orchestrator inyecta el valor del modelo cuando existe. Es la flexibilidad mínima sin romper el contrato.
+- **Backwards-compat sin `required`.** Agregar los 6 campos al set `required` rompería configs viejos. Vía `data.get(..., default)` cualquier config pre-Iter-2 sigue cargando — el valor sólo cambia si el JSON lo declara.
+- **Eliminar el path WIDE.** §8.2.29 dejó V2 como oficial. Mantener V1 dormido era no decidir: ahora se elige terminar la migración. Git preserva la historia si alguien necesita reconstruir el path WIDE.
+- **`baseline_year`/`baseline_n_weeks` en `ModelConfig` y no en CLI únicamente.** Si vive en el JSON, agregar un modelo nuevo con baseline distinto (digamos, año 2024 weeks 1..8) requiere editar el JSON, no recordar pasar flags al cron. CLI overrides quedan para casos puntuales (re-bootstrap experimental con ventana distinta sin tocar el JSON).
+- **`MISSING_SENTINEL` model-wide:** el upstream uniforme garantiza que el valor es propiedad del extract, no de la variable. Per-variable agrega columna nueva en `META_VARIABLES`, populate + lectura por variable en bootstrap/ETL, y tests adicionales — todo para preparar un escenario hipotético (modelo con extracts mixtos por variable) sin caso de uso real. YAGNI hasta que el segundo modelo lo demande.
+
+**Alternativas descartadas.**
+
+- **Reglas en `META_METRIC_THRESHOLDS` con un `metric_name` especial:** mezcla dos conceptos distintos (umbral de alerta por métrica vs regla de agregación de severidad). El `UniqueConstraint` ya está diseñado para métricas; reutilizar el slot perjudica la legibilidad y el `metric_id` resultante apuntaría a una métrica falsa.
+- **`META_AGGREGATION_RULES` con clave por enum y no string:** un Python enum mejora el autocompletado pero atornilla el catálogo a un release. Los nombres viven en JSON `details` de muchas tablas; string en `rule_name` mantiene consistencia.
+- **Ventanas en `META_AGGREGATION_RULES` también** (siguiendo el patrón de A3): mezcla "regla de evaluación" con "parámetro de cómputo". Las primeras cambian por decisión humana (qué severidad asignar); las segundas cambian por característica del modelo (volumen, cadencia). Separarlas mantiene la semántica limpia.
+- **Promover MISSING_SENTINEL a per-variable:** ver razones arriba (YAGNI).
+- **Mantener `bootstrap_v2.py` como subclase explícita:** elegante en teoría, pero genera dos lugares donde se puede insertar lógica nueva. Una clase es más simple y la subclase no aportaba aislamiento real (el padre se modificaba igual cuando había cambios cross).
+- **Flag `--source serc | base_train` en el bootstrap unificado:** preserva el path WIDE pero introduce ramas condicionales en código vivo para una opción que no se usa. Si re-aparece la necesidad se reintroduce dirigida.
+
+**Trade-offs.**
+
+- **Una tabla SCD2 más:** 3 filas hoy, crecimiento esperado de ~3 filas por cambio de reglas (raro, < 1×/año proyectado). Cost trivial; el patrón ya está consolidado.
+- **`MetricsCalculator` ahora carga `ModelConfig` antes de instanciarse en el orchestrator.** El test smoke equivalente puede instanciar sin config — el fallback a defaults preserva ese caso.
+- **El seed corre en cada bootstrap** (idempotente). Si en el futuro se quiere desplegar reglas distintas en RDS productivo vs local, el seed inicial no debe ejecutarse — alternativa: flag `--skip-aggregation-seed` en `run_bootstrap.py`. Hoy no se necesita.
+- **Path WIDE retirado del código:** recuperable desde git history. Si alguna recalibración futura necesita reconstruir baseline desde `base_train_test_bb.csv`, hay que reabrir el archivo desde una rama anterior.
+- **`upgrades.md §A4` cubría 5 ítems; quedan 4 en esta iteración.** `MISSING_SENTINEL` se documenta como decisión explícita de no-promover. `NUM_BINS_NUMERIC` ya quedó model-wide en `config.json` desde §8.2.30 (no aplica).
+
+**Verificación.**
+
+- 158/158 tests pasan (+11 vs Iter 1: +8 nuevos en `test_aggregation_rules.py`, +3 en `test_model_config.py`).
+- `tests/test_aggregation_rules.py`: cubre seed idempotente, fallback Python con warning, resolución global, override por modelo, aislamiento del global, SCD2 con `as_of` histórico, cierre SCD2 (set `valid_to` + nueva fila).
+- `tests/test_status_aggregation.py`: parametrizado desde `DEFAULT_AGGREGATION_RULES` (no de `settings`).
+- `tests/conftest.py::populated_engine` siembra las 3 reglas globales en el fixture — tests que vayan por `ReportBuilder.build` las encuentran en DB.
+- Drop + bootstrap unificado (`scripts/run_bootstrap.py --model-id BAZBOOST_V1`) reproduce los conteos: 11 segs · 139 vars · 216 thresholds · **3 reglas agregación** · 808 baseline.
+- ETL ventana rodante (2026-03-16 → 03-23 → 03-30 → 04-06) corre OK con la unificada — 808 distributions / 126 binned / 61587 individuals en la última semana.
+- `run_pipeline.py --date 2026-04-06 --no-email --no-llm` → 322 métricas, flota **6 OK | 4 WARNING | 1 CRITICAL**, PDF generado en `artifacts/reports/mlmonitor_2026-04-06.pdf` y subido a S3. La leyenda de severidad del PDF se renderiza con los valores resueltos de la tabla.
+- `grep -r "ModelBootstrapV2\|bootstrap_v2\|run_bootstrap_v2"` en código activo → 0 referencias (sólo menciones históricas en docstrings y ADRs antiguos).
+- `grep -r "settings\.status_"` → 0 referencias.
+
+**Pendiente.**
+
+- Drop+rebuild en RDS productivo + re-bootstrap (autorización explícita del usuario, deferred).
+- Smoke test del pipeline en ECS Fargate con la imagen actualizada.
+- Próxima iteración (BI / observabilidad): B1 (índice compuesto), B3 (denormalizar `FACT_METRICS_HISTORY`), E1 (`FACT_PIPELINE_RUNS`), E2 (alarmas SNS).
+

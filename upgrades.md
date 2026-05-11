@@ -663,10 +663,14 @@ Trazabilidad de qué items de este documento ya quedaron cerrados, parcialmente 
 
 **Tests:** suite final 158 passed (+11 vs cierre Iter 1): +8 nuevos en `test_aggregation_rules.py`, +3 en `test_model_config.py` para los campos A4. `test_status_aggregation.py` adaptado para parametrizar desde `DEFAULT_AGGREGATION_RULES` en vez de `settings`. `conftest.py` siembra reglas globales en el fixture `populated_engine`.
 
+**Documentación de cierre:**
+- ADR formal en `docs/decisions.md §8.2.31` con scope completo, decisión MISSING_SENTINEL, schema de `META_AGGREGATION_RULES`, supersede §8.2.29 (parte de consolidación de bootstrap).
+- `docs/architecture/data_model.md`: nueva §2.4 `META_AGGREGATION_RULES`, §1.7 (MISSING_SENTINEL) actualizada para reflejar que vive en `ModelConfig`, §4.7 (`overall_status`) ahora apunta a la tabla en vez de a `settings.py`.
+- `status_*_count_*` eliminados de `config/settings.py` (verificado con grep: cero referencias en código activo).
+
 **Pendiente operativo (fuera de scope de código local):**
 - [ ] Drop+rebuild en RDS productivo + re-bootstrap + backfill (autorización del usuario).
 - [ ] Smoke test en ECS Fargate con la imagen actualizada.
-- [ ] (Deuda menor) Limpiar `status_*_count_*` de `config/settings.py` una vez verificado que nada los lee directamente — dejados un tiempo como red de seguridad.
 
 ### Iteración 3 — BI / observabilidad (P1)
 

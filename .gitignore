@@ -83,4 +83,12 @@ htmlcov/
 
 # data
 *.csv
+*.json
 scripts/create_presentation.py
+
+# Excepciones: configuración por modelo (versionada en git, baked en imagen Docker)
+# Decisión arquitectónica: la config del modelo va con el código, no con los datos crudos.
+# Ver docs/decisions.md §8.2.30.
+!data/inputs/model_configs/
+!data/inputs/model_configs/**/*.csv
+!data/inputs/model_configs/**/*.json

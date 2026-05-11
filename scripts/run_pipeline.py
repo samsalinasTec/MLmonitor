@@ -49,8 +49,11 @@ def parse_args():
     parser.add_argument(
         "--model-id",
         type=str,
-        default="BAZBOOST_V1",
-        help="ID del modelo a monitorear",
+        default=None,
+        help=(
+            "ID del modelo a monitorear. Si se omite, se procesan todos los "
+            "modelos activos de META_MODEL_REGISTRY (uno por uno)."
+        ),
     )
     return parser.parse_args()
 
@@ -77,7 +80,14 @@ def main():
     from mlmonitor.db.connection import create_db_engine
     engine = create_db_engine(db_url)
 
-    # Crear analista LLM si se requiere
+    # Resolver lista de modelos a procesar
+    from mlmonitor.data.model_registry import resolve_model_ids
+    from mlmonitor.db.session import get_session
+    with get_session(engine) as session:
+        model_ids = resolve_model_ids(session, args.model_id)
+    print(f"[run_pipeline] Modelos a procesar: {model_ids}")
+
+    # Crear analista LLM si se requiere (compartido entre todos los modelos)
     analyst = None
     if not args.no_llm:
         try:
@@ -88,16 +98,29 @@ def main():
             print(f"[run_pipeline] Advertencia: no se pudo inicializar el LLM: {e}")
             print("[run_pipeline] Continuando sin narrativas LLM...")
 
-    # Ejecutar pipeline
+    # Ejecutar pipeline para cada modelo activo
     from mlmonitor.pipeline.orchestrator import PipelineOrchestrator
     orchestrator = PipelineOrchestrator(engine=engine, output_dir=output_dir)
 
-    results = orchestrator.run(
-        model_id=args.model_id,
-        calculation_date=calculation_date,
-        send_email=not args.no_email,
-        analyst=analyst,
-    )
+    failed: list[tuple[str, str]] = []
+    for model_id in model_ids:
+        print(f"\n[run_pipeline] === Modelo: {model_id} ===")
+        try:
+            orchestrator.run(
+                model_id=model_id,
+                calculation_date=calculation_date,
+                send_email=not args.no_email,
+                analyst=analyst,
+            )
+        except Exception as e:
+            print(f"[run_pipeline] ✗ Modelo {model_id} falló: {e}")
+            failed.append((model_id, str(e)))
+
+    if failed:
+        print(f"\n[run_pipeline] {len(failed)}/{len(model_ids)} modelos fallaron:")
+        for mid, err in failed:
+            print(f"  ✗ {mid}: {err}")
+        return 1
 
     return 0
 

@@ -22,14 +22,8 @@ import numpy as np
 import pandas as pd
 from sqlalchemy.orm import Session
 
-from mlmonitor.data.bootstrap import (
-    MISSING_SENTINEL,
-    NUM_BINS_NUMERIC,
-    SCORE_BIN_LABELS,
-    SCORE_BINS,
-    ModelBootstrap,
-)
-from mlmonitor.data.variable_mapping import CANONICAL_VARIABLES, serc_to_canonical
+from mlmonitor.data.bootstrap import ModelBootstrap
+from mlmonitor.data.model_config import ModelConfig
 from mlmonitor.db.models import MetaBaselineDistributions, MetaVariables
 
 logger = logging.getLogger(__name__)
@@ -51,13 +45,19 @@ class ModelBootstrapV2(ModelBootstrap):
     def __init__(
         self,
         session: Session,
+        config: ModelConfig,
         raw_dir: str | Path = "data/inputs/raw_tables",
         baseline_filename: str | None = None,
         baseline_year: int = 2026,
         baseline_n_weeks: int = 4,
         variables_serc_filename: str | None = None,
     ):
-        super().__init__(session, raw_dir=raw_dir, baseline_filename=baseline_filename)
+        super().__init__(
+            session,
+            config=config,
+            raw_dir=raw_dir,
+            baseline_filename=baseline_filename,
+        )
         self.baseline_year = baseline_year
         self.baseline_n_weeks = baseline_n_weeks
         self._variables_serc_filename = variables_serc_filename
@@ -128,7 +128,9 @@ class ModelBootstrapV2(ModelBootstrap):
             return 0
 
         # Map SERC → canonical y descarta filas no canónicas
-        baseline_df["_canonical"] = baseline_df["fcnombre_variable"].apply(serc_to_canonical)
+        baseline_df["_canonical"] = baseline_df["fcnombre_variable"].apply(
+            self.config.serc_to_canonical
+        )
         canonical_df = baseline_df.dropna(subset=["_canonical"]).copy()
 
         # Preserva valor original (categóricas) y convierte numérico
@@ -146,34 +148,31 @@ class ModelBootstrapV2(ModelBootstrap):
         """Variables input: numéricas → qcut + cuts; categóricas → categorías directas."""
         all_rows: list[MetaBaselineDistributions] = []
 
-        for seg_id in range(1, 12):
-            submodel_id = f"s{seg_id}"
-            reg_id = self._registry_map.get(submodel_id)
+        for seg in self.config.segments:
+            reg_id = self._registry_map.get(seg.segment_id)
             if reg_id is None:
                 continue
 
-            seg_df = df[df["fiidsegmento"] == seg_id]
+            seg_int = self.config.segment_id_int(seg.segment_id)
+            seg_df = df[df["fiidsegmento"] == seg_int]
             if seg_df.empty:
-                logger.warning("V2: no baseline data for segment %d in window", seg_id)
+                logger.warning("V2: no baseline data for segment %s in window", seg.segment_id)
                 continue
 
-            canonical_vars = CANONICAL_VARIABLES.get(seg_id, [])
-
-            for vname in canonical_vars:
-                var_id = self._variable_map.get((submodel_id, vname))
+            for vname in seg.variables:
+                var_id = self._variable_map.get((seg.segment_id, vname))
                 if var_id is None:
                     continue
 
                 var_rows = seg_df[seg_df["_canonical"] == vname]
                 if var_rows.empty:
                     logger.warning(
-                        "V2: variable '%s' no encontrada en window (segmento %d)",
-                        vname, seg_id,
+                        "V2: variable '%s' no encontrada en window (segmento %s)",
+                        vname, seg.segment_id,
                     )
                     continue
 
-                is_categorical = vname == "fisexo"
-                if is_categorical:
+                if self.config.is_categorical(vname):
                     series = var_rows["_fcvalor_original"]
                     all_rows.extend(self._bin_categorical_baseline(series, reg_id, var_id))
                 else:
@@ -190,17 +189,19 @@ class ModelBootstrapV2(ModelBootstrap):
         self, values: pd.Series, reg_id: int, var_id: int,
     ) -> list[MetaBaselineDistributions]:
         """qcut sobre la ventana baseline; persiste cuts en MetaVariables.binning_rules."""
+        sentinel = self.config.missing_sentinel
+        n_bins_target = self.config.num_bins_numeric
         total_records = len(values)
-        null_count = int(values.isna().sum() + (values == MISSING_SENTINEL).sum())
-        clean = values[(values.notna()) & (values != MISSING_SENTINEL)]
+        null_count = int(values.isna().sum() + (values == sentinel).sum())
+        clean = values[(values.notna()) & (values != sentinel)]
 
         if clean.empty:
             return []
 
         try:
-            _, bin_edges = pd.qcut(clean, q=NUM_BINS_NUMERIC, retbins=True, duplicates="drop")
+            _, bin_edges = pd.qcut(clean, q=n_bins_target, retbins=True, duplicates="drop")
         except ValueError:
-            _, bin_edges = pd.cut(clean, bins=NUM_BINS_NUMERIC, retbins=True)
+            _, bin_edges = pd.cut(clean, bins=n_bins_target, retbins=True)
 
         cuts = [float(e) for e in bin_edges]
         var_row = self.session.get(MetaVariables, var_id)
@@ -240,23 +241,25 @@ class ModelBootstrapV2(ModelBootstrap):
         )
 
         all_rows: list[MetaBaselineDistributions] = []
-        last_idx = len(SCORE_BINS) - 1
+        score_bins = self.config.score_bins
+        score_bin_labels = self.config.score_bin_labels
+        last_idx = len(score_bins) - 1
 
-        for seg_id in range(1, 12):
-            submodel_id = f"s{seg_id}"
-            score_var_id = self._score_var_map.get(submodel_id)
-            reg_id = self._registry_map.get(submodel_id)
+        for seg in self.config.segments:
+            score_var_id = self._score_var_map.get(seg.segment_id)
+            reg_id = self._registry_map.get(seg.segment_id)
             if score_var_id is None or reg_id is None:
                 continue
 
-            grp = score_df[score_df["fiidsegmento"] == seg_id]
+            seg_int = self.config.segment_id_int(seg.segment_id)
+            grp = score_df[score_df["fiidsegmento"] == seg_int]
             if grp.empty:
                 continue
 
             total_records = len(grp)
             scores = grp["fnpuntaje"]
 
-            for idx, ((lo, hi), label) in enumerate(zip(SCORE_BINS, SCORE_BIN_LABELS)):
+            for idx, ((lo, hi), label) in enumerate(zip(score_bins, score_bin_labels)):
                 if idx == last_idx:
                     in_bin = scores[(scores >= lo) & (scores <= hi)]
                 else:

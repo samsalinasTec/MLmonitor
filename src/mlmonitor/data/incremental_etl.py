@@ -21,7 +21,7 @@ import numpy as np
 import pandas as pd
 from sqlalchemy.orm import Session
 
-from mlmonitor.data.variable_mapping import serc_to_canonical
+from mlmonitor.data.model_config import ModelConfig
 from mlmonitor.db.models import (
     FactDistributions,
     FactPerformanceBinned,
@@ -31,8 +31,6 @@ from mlmonitor.db.models import (
 )
 
 logger = logging.getLogger(__name__)
-
-MISSING_SENTINEL = -100
 
 
 def _date_to_iso_week(d: date) -> int:
@@ -44,11 +42,12 @@ def _date_to_iso_week(d: date) -> int:
 class IncrementalETL:
     """Carga incremental semanal de FACT tables."""
 
-    def __init__(self, session: Session, model_id: str = "BAZBOOST_V1"):
+    def __init__(self, session: Session, config: ModelConfig):
         self.session = session
-        self.model_id = model_id
+        self.config = config
+        self.model_id = config.model_id
 
-        # Config leida de META tables
+        # Config leida de META tables (poblada por _load_config_from_db)
         self._segments: dict[str, int] = {}        # submodel_id -> registry_id
         self._input_vars: dict[int, list[dict]] = {}  # registry_id -> [{id, name, type, binning_rules, woe_categories}]
         self._score_vars: dict[int, int] = {}       # registry_id -> score variable_id
@@ -227,7 +226,7 @@ class IncrementalETL:
             logger.info("Flow A: no SERC data for week %s", execution_week)
             return {"distributions_rows": 0}
 
-        df["_canonical"] = df["fcnombre_variable"].apply(serc_to_canonical)
+        df["_canonical"] = df["fcnombre_variable"].apply(self.config.serc_to_canonical)
         df = df.dropna(subset=["_canonical"])
         # Preserve original values for categoricals; convert numerics separately
         df["_fcvalor_original"] = df["fcvalor_variable"]
@@ -293,8 +292,9 @@ class IncrementalETL:
 
         vals = grp["fcvalor_variable"]
         total_records = len(vals)
-        null_count = int(vals.isna().sum() + (vals == MISSING_SENTINEL).sum())
-        clean = vals[(vals.notna()) & (vals != MISSING_SENTINEL)]
+        sentinel = self.config.missing_sentinel
+        null_count = int(vals.isna().sum() + (vals == sentinel).sum())
+        clean = vals[(vals.notna()) & (vals != sentinel)]
 
         if clean.empty:
             return []

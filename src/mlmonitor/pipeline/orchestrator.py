@@ -22,8 +22,6 @@ from mlmonitor.metrics.calculator import MetricsCalculator
 from mlmonitor.report.builder import ReportBuilder
 from mlmonitor.report.renderer import PDFRenderer
 
-MODEL_ID = "BAZBOOST_V1"
-
 
 class PipelineOrchestrator:
     """Orquesta el pipeline completo de monitoreo."""
@@ -38,7 +36,7 @@ class PipelineOrchestrator:
 
     def run(
         self,
-        model_id: str = MODEL_ID,
+        model_id: str,
         calculation_date: date | None = None,
         send_email: bool = True,
         analyst=None,

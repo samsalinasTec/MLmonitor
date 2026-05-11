@@ -16,7 +16,6 @@ from sqlalchemy.orm import Session
 
 from config.settings import settings
 from mlmonitor.analyst.base import AnalysisContext, AnalysisResult, SegmentMetrics
-from mlmonitor.data.bootstrap import PRIMARY_TARGET
 from mlmonitor.db.models import (
     FactMetricsHistory,
     MetaMetricThresholds,
@@ -242,14 +241,19 @@ class ReportBuilder:
                 }
 
         # Resolver primary_target ANTES del loop para poder pasarlo a cada segmento.
+        # Fuente de verdad: META_MODEL_REGISTRY.primary_target_variable.
+        # Fallback (cuando la columna está NULL o el target nombrado no está activo):
+        # target con lag mediano. Para "ningún target activo" queda string vacío.
         active_target_names = {tv.variable_name for tv in all_targets}
-        if PRIMARY_TARGET in active_target_names:
-            resolved_primary_target = PRIMARY_TARGET
+        registered_primary = model_regs[0].primary_target_variable if model_regs else None
+
+        if registered_primary and registered_primary in active_target_names:
+            resolved_primary_target = registered_primary
         elif active_target_names:
             mid_idx = len(performance_coverage) // 2
             resolved_primary_target = performance_coverage[mid_idx]["target"]
         else:
-            resolved_primary_target = PRIMARY_TARGET
+            resolved_primary_target = ""
 
         # Construir SegmentMetrics por segmento
         segments = []

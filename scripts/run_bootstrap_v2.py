@@ -36,10 +36,18 @@ def main():
     parser = argparse.ArgumentParser(
         description="Bootstrap V2: baseline desde primeras N semanas de variables_serc"
     )
+    parser.add_argument(
+        "--model-id", required=True,
+        help=(
+            "ID del modelo a registrar (ej: BAZBOOST_V1). Va a META_MODEL_REGISTRY.model_id. "
+            "El resto de la configuración (primary_target, segments, variables, score_bins, etc.) "
+            "se carga de data/inputs/model_configs/<model_id_lowercase>/config.json."
+        ),
+    )
     parser.add_argument("--db-url", default=None, help="URL de la base de datos")
     parser.add_argument(
         "--raw-dir", default=None,
-        help="Directorio con CSVs raw (default: data/inputs/raw_tables)",
+        help="Directorio con CSVs raw para datos semanales (default: data/inputs/raw_tables)",
     )
     parser.add_argument(
         "--variables-serc-file", default=None,
@@ -58,8 +66,14 @@ def main():
     project_root = Path(__file__).parent.parent
     raw_dir = Path(args.raw_dir) if args.raw_dir else project_root / "data" / "inputs" / "raw_tables"
 
+    from mlmonitor.data.model_config import ModelConfig
+    config = ModelConfig.for_model(args.model_id)
+
     print(f"[bootstrap_v2] DB: {db_url}")
     print(f"[bootstrap_v2] Raw dir: {raw_dir}")
+    print(f"[bootstrap_v2] Model ID: {config.model_id}")
+    print(f"[bootstrap_v2] Config dir: {config.config_dir}")
+    print(f"[bootstrap_v2] Primary target: {config.primary_target}")
     print(f"[bootstrap_v2] Baseline window: year={args.year} weeks=1..{args.n_weeks}")
 
     engine = create_db_engine(db_url)
@@ -72,6 +86,7 @@ def main():
     with get_session(engine) as session:
         bootstrap = ModelBootstrapV2(
             session,
+            config=config,
             raw_dir=raw_dir,
             variables_serc_filename=args.variables_serc_file,
             baseline_year=args.year,

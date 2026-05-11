@@ -573,3 +573,72 @@ La implementación de esta decisión está en §8.2.18.
 **Pendiente / próximos pasos.**
 - Consolidar `bootstrap.py` y `bootstrap_v2.py` en un único bootstrap cuando V2 esté validado en RDS (deuda registrada).
 - Decidir cadencia de refresco (anual? bianual?) y mecanismo (¿cerrar SCD2 del baseline anterior y crear uno nuevo, o sobrescribir?). Esto se documentará en una ADR aparte cuando se acerque el primer refresco.
+
+
+## §8.2.30 Configuración por modelo externalizada + `model_id` y `primary_target` como metadata
+
+**Fecha:** 2026-05-07 · **Estado:** Aceptado · **Supersede:** parte de §8.2.16 y §8.2.18 (las constantes del modelo en código)
+
+**Contexto.** La herramienta asumía un único modelo (BAZBOOST_V1) en código en al menos siete puntos:
+- `MODEL_ID = "BAZBOOST_V1"` como constante o default en `pipeline/orchestrator.py`, `data/incremental_etl.py`, `data/bootstrap.py`, y los argparse de `scripts/run_pipeline.py` y `scripts/run_incremental_etl.py`.
+- `PRIMARY_TARGET = "b_malo14_26"` como constante en `bootstrap.py`, importada desde `report/builder.py`. Adicionalmente, el dataclass `AnalysisContext.primary_target` declaraba un default `"b_malo8_13"` desincronizado — bug latente que sólo se evitaba porque el builder siempre seteaba el campo explícitamente.
+- Todo el módulo `src/mlmonitor/data/variable_mapping.py`: `CANONICAL_VARIABLES` (variables por segmento), `_SPECIAL_CASES` (mapeo SERC→canónico para casos no resolubles por normalización), `EXTRA_SERC_VARIABLES` (variables intermedias a ignorar), `SEGMENT_GROUP_NAMES`, `SEGMENT_FEATURE_COUNTS`, `serc_to_canonical()` y `get_canonical_variables_for_segment()`.
+- Constantes módulo en `bootstrap.py`: `MODEL_NAME`, `MODEL_TYPE`, `OWNER_TEAM`, `TARGET_VARIABLES`, `SCORE_BINS`, `SCORE_BIN_LABELS`, `SCORE_BIN_CUTS`, `MISSING_SENTINEL`, `NUM_BINS_NUMERIC`.
+- `range(1, 12)` repetido en seis lugares (`bootstrap.py`, `bootstrap_v2.py`) para iterar sobre los 11 segmentos.
+- Detección de variables categóricas hardcodeada como `vname == "fisexo"`.
+
+Para incorporar un segundo modelo (objetivo cercano del proyecto, ver §8.2.20 y dudas D7) era inevitable replicar y adaptar todo eso, generando duplicación y bugs por desincronización entre las distintas constantes que dicen lo mismo.
+
+**Decisión.**
+1. **Nueva columna `primary_target_variable` en `META_MODEL_REGISTRY`** (`String(100), nullable=True`, sin foreign key a `META_VARIABLES` por SCD2 — el `variable_name` es estable a través de versiones). Aplicada como cambio del schema (CLAUDE.md §3 marca el modelo de datos como congelado; este ADR es la autorización explícita).
+2. **`model_id` deja de tener default en runtime.** Los scripts `run_pipeline.py` y `run_incremental_etl.py` pasan a auto-detectar todos los modelos activos en `META_MODEL_REGISTRY` cuando no se les pasa `--model-id`. Helper nuevo: `mlmonitor.data.model_registry.resolve_model_ids(session, explicit)` retorna `[explicit]` si está poblado, o todos los `model_id` distintos con `valid_to IS NULL` si no. Para multi-modelo, el cron semanal pasa a procesar toda la flota sin tocar nada.
+3. **`primary_target` deja de ser constante global.** Vive en `META_MODEL_REGISTRY.primary_target_variable`. El builder lee `model_regs[0].primary_target_variable` con fallback a "target con lag mediano". El default desincronizado del dataclass `AnalysisContext.primary_target` se elimina (es ahora un campo requerido).
+4. **Toda la configuración estática del modelo se externaliza a `data/inputs/model_configs/<model_id_lowercase>/`**:
+   - `config.json` con todas las constantes pequeñas: nombre, tipo, owner, score_bins, score_min/max, missing_sentinel, num_bins_numeric, primary_target, lista de targets (con lag y ascending_order), lista de segmentos (con sus variables canónicas, group_name y feature_count), name_mapping (SERC→canónico para casos especiales), extra_serc_variables, categorical_variables.
+   - `variable_descriptions.csv` (movido de `raw_tables/Dicionario_Variables_BB.csv`).
+   - `segment_descriptions.csv` (movido de `raw_tables/Dicionario_Segmentos_BB.csv`).
+   - `thresholds.csv` (movido de `raw_tables/tresholds_monitoreo.csv` — typo histórico corregido).
+5. **Los 4 archivos van versionados en git**, baked into la imagen Docker. Excepción explícita en `.gitignore`. Razón: la configuración del modelo es código (cambia raro, va junto con la versión del modelo, debe estar atada al commit/tag de Docker), no es data (que sí se sincroniza desde S3). Esto evita drift entre "qué modelo dice el código" y "qué config baja S3".
+6. **Nuevo módulo `src/mlmonitor/data/model_config.py`** con dataclasses `ModelConfig`, `TargetConfig`, `SegmentConfig`. Loaders: `from_json_file(path)` con validación (campos requeridos, primary_target ∈ targets, categorical_variables ⊆ segments.variables, score_bins consistentes), y `for_model(model_id, base_dir=None)` que auto-resuelve `<base_dir>/<model_id_lowercase>/config.json`. Métodos helper que reemplazan las funciones globales eliminadas (`serc_to_canonical`, `is_categorical`, `segment_by_id`, `score_bin_labels`, `score_bin_cuts`, etc.).
+7. **`src/mlmonitor/data/variable_mapping.py` ELIMINADO.** Su funcionalidad pasa al JSON o a métodos de `ModelConfig`.
+8. **`bootstrap.py`, `bootstrap_v2.py`, `incremental_etl.py`, `threshold_loader.py` reciben `config: ModelConfig`** como argumento (en lugar de importar las constantes globales). Todos los `range(1, 12)` se reemplazan por `for seg in self.config.segments`. La detección categórica `vname == "fisexo"` por `self.config.is_categorical(vname)`. La función global `serc_to_canonical` por `self.config.serc_to_canonical`.
+9. **Scripts CLI:** `run_bootstrap.py` y `run_bootstrap_v2.py` ya no requieren `--primary-target` (viene del JSON); cargan `ModelConfig.for_model(args.model_id)`. `run_incremental_etl.py` carga el config dentro del loop sobre `model_ids`.
+
+**Razones.**
+- **Multi-modelo:** agregar un segundo modelo es crear un directorio nuevo + un JSON, sin tocar código del runtime. El bootstrap acepta cualquier `--model-id` que tenga su `config.json`.
+- **Sin drift entre código y config:** la config va atada al commit/tag de la imagen Docker, no se sincroniza desde S3. La versión productiva incluye exactamente la config con la que se testeó localmente.
+- **JSON sobre Python module / YAML / TOML:** stdlib (sin dependencias nuevas), separación clara entre datos del modelo y código de la herramienta, futuro-compatible si crédito quiere editarlo sin tocar Python; la sintaxis estricta es aceptable porque el config se valida al cargar y el JSON tiene tooling universal.
+- **Encapsulado en `model_configs/<model_id>/` sobre referencias por path:** cada modelo es una unidad cohesiva (la config + sus catálogos). Escala a multi-area: cuando entre `RIESGO_OPERACIONAL_V1`, va a `data/inputs/model_configs/riesgo_operacional_v1/`.
+- **`primary_target_variable` como string sin FK:** SCD2 en `META_VARIABLES` rompería la FK al cerrar versiones de un target. El nombre del target es estable a través de versiones; usarlo como string es la convención mínima invasiva (es lo que el resto del código ya hace al construir nombres de métricas como `f"gini_{primary_target}"`).
+- **Auto-detección plural sobre `--model-id` requerido:** preserva el comportamiento dev local actual (CLAUDE.md §5: comandos sin `--model-id`). Cuando entre el segundo modelo, el cron semanal procesa toda la flota sin que el operador tenga que enumerar modelos.
+- **Drop+rebuild de RDS sobre script de migración SCD2:** el proyecto sigue en desarrollo, no hay histórico real que preservar. El usuario lo confirmó en sesión 2026-05-07. Patrón equivalente al usado en §8.2.22 para `first_payment_default2`.
+
+**Alternativas descartadas.**
+- **Mantener `variable_mapping.py` con dispatch por `model_id`:** ensucia el código con condicionales y reproduce el problema en pequeño.
+- **YAML o TOML para el config:** YAML agrega dependencia (`pyyaml`); TOML es menos cómodo para listas-de-dicts anidadas como segmentos × variables. JSON es el balance correcto.
+- **Variable de entorno `MODEL_ID` como fuente única:** ya hay convención de auto-detección plural; env var requeriría caso especial y duplicaría intención.
+- **Mantener los CSVs en `raw_tables/` y referenciarlos por path desde el JSON:** mezcla "datos del modelo" con "datos crudos semanales"; trabajo operativo similar al de moverlos pero pierde la separación arquitectónica.
+- **`primary_target` como FK a `META_VARIABLES.id`:** la SCD2 de `META_VARIABLES` invalida la FK al cerrar versiones de un target.
+- **Script de migración SCD2 con `ALTER TABLE ADD COLUMN` + UPDATE:** vale para producción pero sobre-diseñado mientras el proyecto sigue en desarrollo.
+
+**Trade-offs.**
+- Drop+rebuild en RDS borra `FACT_METRICS_HISTORY`, `FACT_DECILES_HISTORY`, `FACT_DISTRIBUTIONS`, `FACT_PERFORMANCE_BINNED`, `FACT_PERFORMANCE_INDIVIDUAL`. Aceptable hoy (proyecto en desarrollo, sin histórico operativo). Cuando entremos a producción real este patrón ya no será aceptable y habrá que migrar a SCD2.
+- La imagen Docker incluye los 3 CSVs de catálogo (~100 KB total). Trivial.
+- El `.gitignore` necesita una excepción para `data/inputs/model_configs/**/*.csv` y `**/*.json` porque las reglas globales `*.csv` y `*.json` siguen aplicando para el resto del repo.
+- Eliminar `variable_mapping.py` rompe cualquier import de un consumer fuera del repo (no aplica hoy; se documenta como cambio incompatible).
+
+**Verificación.**
+- 131/131 tests pasan (vs 104 + 6 fallidos pre-existentes antes de la iteración).
+- Bootstrap fresco contra SQLite local (`run_bootstrap_v2.py --model-id BAZBOOST_V1` sin `--primary-target`) reproduce los conteos previos: 11 segmentos · 139 vars · 216 thresholds · 808 baseline rows. Las 11 filas de `META_MODEL_REGISTRY` quedan con `primary_target_variable='b_malo14_26'`.
+- ETL en ventana rodante de 4 semanas (2026-03-16, 03-23, 03-30, 04-06) corre OK; auto-detección de modelo activo funciona.
+- Pipeline `--date 2026-04-06 --no-email --no-llm` genera PDF; `AnalysisContext.primary_target` se resuelve correctamente desde la columna nueva.
+- `grep -r "variable_mapping" src/ scripts/ tests/` → 0 referencias activas (sólo comentarios informativos en docstrings).
+- Caso de error claro: DB vacía + `run_pipeline.py` sin `--model-id` → `ValueError: No hay modelos activos en META_MODEL_REGISTRY...`.
+
+**Pendiente.**
+- Drop+rebuild en RDS productivo (autorización explícita del usuario antes de aplicar).
+- Re-bootstrap apuntando a RDS: `poetry run python scripts/run_bootstrap_v2.py --model-id BAZBOOST_V1`.
+- Re-correr `scripts/backfill.py --start 2025-09-01 --end 2026-04-06` post-rebuild.
+- Smoke test del pipeline en producción: `aws ecs run-task` con `RUN_DATE` para una semana conocida.
+- Commit final de la iteración 1 (A1+A2+A5+A6+fix tests+ADR §8.2.30+devlog).
+- Una vez validado, empezar la iteración 2 con A3 (reglas de agregación a tabla) o D7 (consolidar bootstrap+bootstrap_v2) según prioridad.

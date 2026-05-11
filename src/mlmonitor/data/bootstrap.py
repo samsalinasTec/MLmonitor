@@ -2,13 +2,19 @@
 ModelBootstrap — Poblacion inicial (una sola vez) de tablas META y distribucion de referencia.
 
 Separa la logica de inicializacion del ETL incremental semanal:
-- META_MODEL_REGISTRY: 11 segmentos BAZBOOST_V1
+- META_MODEL_REGISTRY: una fila por segmento (los segmentos vienen del config del modelo)
 - META_VARIABLES: input + output (score) + target por segmento
-- META_METRIC_THRESHOLDS: umbrales globales de alerta
+- META_METRIC_THRESHOLDS: umbrales por segmento (desde thresholds.csv del modelo)
 - META_BASELINE_DISTRIBUTIONS: distribuciones del baseline de entrenamiento (WIDE)
 
+Toda la configuración estática del modelo (variables, segmentos, targets, score_bins,
+nombres, tipos de variables categóricas, etc.) vive en
+`data/inputs/model_configs/<model_id>/config.json`. Ver `data/model_config.py`
+y la ADR §8.2.30.
+
 Uso:
-    bootstrap = ModelBootstrap(session, raw_dir=Path("data/inputs/raw_tables"))
+    config = ModelConfig.for_model("BAZBOOST_V1")
+    bootstrap = ModelBootstrap(session, config=config)
     result = bootstrap.run()
 """
 
@@ -20,11 +26,7 @@ import numpy as np
 import pandas as pd
 from sqlalchemy.orm import Session
 
-from mlmonitor.data.variable_mapping import (
-    CANONICAL_VARIABLES,
-    SEGMENT_FEATURE_COUNTS,
-    SEGMENT_GROUP_NAMES,
-)
+from mlmonitor.data.model_config import ModelConfig
 from mlmonitor.db.models import (
     MetaBaselineDistributions,
     MetaMetricThresholds,
@@ -34,40 +36,14 @@ from mlmonitor.db.models import (
 
 logger = logging.getLogger(__name__)
 
-# --- Constantes del modelo BazBoost (fuente de verdad para bootstrap) --------
 
-MODEL_ID = "BAZBOOST_V1"
-MODEL_NAME = "BazBoost Credito"
-MODEL_TYPE = "logistic_regression_scorecard"
-OWNER_TEAM = "analytics credito"
-
-SCORE_BINS = [
-    (0, 100), (100, 200), (200, 300), (300, 400), (400, 500),
-    (500, 600), (600, 700), (700, 800), (800, 900), (900, 1000),
-]
-SCORE_BIN_LABELS = [f"{lo}-{hi}" for lo, hi in SCORE_BINS]
-SCORE_BIN_CUTS = [b[0] for b in SCORE_BINS] + [SCORE_BINS[-1][1]]
-
-MISSING_SENTINEL = -100
-NUM_BINS_NUMERIC = 10
-
-TARGET_VARIABLES: dict[str, dict] = {
-    "b_malo4_6":   {"lag_semanas": 6,  "ascending_order": False},
-    "b_malo8_13":  {"lag_semanas": 13, "ascending_order": False},
-    "b_malo14_26": {"lag_semanas": 26, "ascending_order": False},
-}
-
-PRIMARY_TARGET = "b_malo14_26"
-
-
-def _load_variable_descriptions(raw_dir: Path) -> dict[str, str]:
-    """Load canonical variable short descriptions from Dicionario_Variables_BB.csv.
+def _load_variable_descriptions(csv_path: Path) -> dict[str, str]:
+    """Load canonical variable short descriptions desde el CSV indicado.
 
     Returns {variable_name: short_description}.
     """
-    csv_path = raw_dir / "Dicionario_Variables_BB.csv"
     if not csv_path.exists():
-        logger.warning("Variable dictionary not found: %s", csv_path)
+        logger.warning("Variable descriptions CSV not found: %s", csv_path)
         return {}
     df = pd.read_csv(csv_path)
     out: dict[str, str] = {}
@@ -83,14 +59,13 @@ def _load_variable_descriptions(raw_dir: Path) -> dict[str, str]:
     return out
 
 
-def _load_segment_descriptions(raw_dir: Path) -> dict[int, str]:
-    """Load segment short descriptions from Dicionario_Segmentos_BB.csv.
+def _load_segment_descriptions(csv_path: Path) -> dict[int, str]:
+    """Load segment short descriptions desde el CSV indicado.
 
     Returns {segment_id (int): short_description}.
     """
-    csv_path = raw_dir / "Dicionario_Segmentos_BB.csv"
     if not csv_path.exists():
-        logger.warning("Segment dictionary not found: %s", csv_path)
+        logger.warning("Segment descriptions CSV not found: %s", csv_path)
         return {}
     df = pd.read_csv(csv_path)
     out: dict[int, str] = {}
@@ -112,10 +87,12 @@ class ModelBootstrap:
     def __init__(
         self,
         session: Session,
+        config: ModelConfig,
         raw_dir: str | Path = "data/inputs/raw_tables",
         baseline_filename: str | None = None,
     ):
         self.session = session
+        self.config = config
         self.raw_dir = Path(raw_dir)
         self._baseline_filename = baseline_filename
 
@@ -124,9 +101,9 @@ class ModelBootstrap:
         self._variable_map: dict[tuple[str, str], int] = {}  # (submodel_id, var_name) -> var_id
         self._score_var_map: dict[str, int] = {}      # submodel_id -> score variable_id
 
-        # Description lookups from CSV dictionaries
-        self._variable_descriptions = _load_variable_descriptions(self.raw_dir)
-        self._segment_descriptions = _load_segment_descriptions(self.raw_dir)
+        # Description lookups from CSVs en el directorio del config del modelo
+        self._variable_descriptions = _load_variable_descriptions(config.variable_descriptions_csv)
+        self._segment_descriptions = _load_segment_descriptions(config.segment_descriptions_csv)
 
     def _resolve_baseline_path(self) -> Path:
         """Resolve baseline CSV path: explicit name > glob > fallback."""
@@ -156,24 +133,26 @@ class ModelBootstrap:
 
     def _populate_meta_model_registry(self) -> int:
         rows = []
-        for seg_id in range(1, 12):
-            submodel_id = f"s{seg_id}"
-            group_name = SEGMENT_GROUP_NAMES.get(seg_id, "")
-            feature_count = SEGMENT_FEATURE_COUNTS.get(seg_id)
-            seg_desc = self._segment_descriptions.get(seg_id, f"Segmento {seg_id} — {group_name}")
+        for seg in self.config.segments:
+            seg_int = self.config.segment_id_int(seg.segment_id)
+            seg_desc = self._segment_descriptions.get(
+                seg_int,
+                f"Segmento {seg_int} — {seg.group_name}",
+            )
 
             rows.append(MetaModelRegistry(
-                model_id=MODEL_ID,
-                submodel_id=submodel_id,
-                model_name=MODEL_NAME,
+                model_id=self.config.model_id,
+                submodel_id=seg.segment_id,
+                model_name=self.config.model_name,
                 model_description=seg_desc,
-                model_type=MODEL_TYPE,
-                target_definition="Probabilidad de incumplimiento",
-                score_min=0,
-                score_max=1000,
-                feature_count=feature_count,
+                model_type=self.config.model_type,
+                target_definition=self.config.target_definition,
+                score_min=self.config.score_min,
+                score_max=self.config.score_max,
+                feature_count=seg.feature_count,
+                primary_target_variable=self.config.primary_target,
                 training_cutoff_date=None,
-                owner_team=OWNER_TEAM,
+                owner_team=self.config.owner_team,
                 valid_from=date(2024, 3, 1),
                 valid_to=None,
             ))
@@ -186,17 +165,18 @@ class ModelBootstrap:
 
     def _populate_meta_variables(self) -> int:
         rows = []
-        for seg_id in range(1, 12):
-            submodel_id = f"s{seg_id}"
-            reg_id = self._registry_map[submodel_id]
-            canonical_vars = CANONICAL_VARIABLES.get(seg_id, [])
+        for seg in self.config.segments:
+            reg_id = self._registry_map[seg.segment_id]
 
             # Variables de input
-            for vname in canonical_vars:
-                vtype = "categorical" if vname == "fisexo" else "numeric"
+            for vname in seg.variables:
+                vtype = "categorical" if self.config.is_categorical(vname) else "numeric"
                 var_desc = self._variable_descriptions.get(vname)
                 if var_desc is None:
-                    logger.warning("No description found for variable '%s' (segment %d)", vname, seg_id)
+                    logger.warning(
+                        "No description found for variable '%s' (segment %s)",
+                        vname, seg.segment_id,
+                    )
                 rows.append(MetaVariables(
                     model_registry_id=reg_id,
                     variable_name=vname,
@@ -206,13 +186,16 @@ class ModelBootstrap:
                     ascending_order=None,
                     description=var_desc,
                     woe_categories=None,
-                    binning_rules={"type": "quantile", "n_bins": NUM_BINS_NUMERIC} if vtype == "numeric" else None,
+                    binning_rules=(
+                        {"type": "quantile", "n_bins": self.config.num_bins_numeric}
+                        if vtype == "numeric" else None
+                    ),
                     source_table=None,
                     valid_from=date(2023, 1, 1),
                     valid_to=None,
                 ))
 
-            # Variable de output: score (con SCORE_BINS persistidos)
+            # Variable de output: score (con score_bin_cuts del config persistidos)
             rows.append(MetaVariables(
                 model_registry_id=reg_id,
                 variable_name="score",
@@ -222,21 +205,21 @@ class ModelBootstrap:
                 ascending_order=None,
                 description="Puntaje total del scorecard",
                 woe_categories=None,
-                binning_rules={"type": "fixed_cuts", "cuts": SCORE_BIN_CUTS},
+                binning_rules={"type": "fixed_cuts", "cuts": self.config.score_bin_cuts},
                 source_table=None,
                 valid_from=date(2023, 1, 1),
                 valid_to=None,
             ))
 
             # Variables target
-            for tname, tparams in TARGET_VARIABLES.items():
+            for target in self.config.targets:
                 rows.append(MetaVariables(
                     model_registry_id=reg_id,
-                    variable_name=tname,
+                    variable_name=target.name,
                     variable_type="numeric",
                     variable_rol="target",
-                    lag_semanas=tparams["lag_semanas"],
-                    ascending_order=tparams["ascending_order"],
+                    lag_semanas=target.lag_semanas,
+                    ascending_order=target.ascending_order,
                     description=None,
                     woe_categories=None,
                     binning_rules=None,
@@ -271,12 +254,13 @@ class ModelBootstrap:
             parse_thresholds_csv,
         )
 
-        csv_path = self.raw_dir / "tresholds_monitoreo.csv"
-        csv_lookup = parse_thresholds_csv(csv_path)
+        csv_lookup = parse_thresholds_csv(self.config.thresholds_csv, self.config)
 
         rows: list[MetaMetricThresholds] = []
         for submodel_id, registry_id in self._registry_map.items():
-            for kwargs in compute_thresholds_for_segment(submodel_id, registry_id, csv_lookup):
+            for kwargs in compute_thresholds_for_segment(
+                submodel_id, registry_id, csv_lookup, self.config,
+            ):
                 rows.append(MetaMetricThresholds(
                     **kwargs,
                     valid_from=date(2025, 1, 1),
@@ -322,31 +306,30 @@ class ModelBootstrap:
         """Calcula y persiste distribucion baseline para variables input."""
         all_rows: list[MetaBaselineDistributions] = []
 
-        for seg_id in range(1, 12):
-            submodel_id = f"s{seg_id}"
-            reg_id = self._registry_map.get(submodel_id)
+        for seg in self.config.segments:
+            reg_id = self._registry_map.get(seg.segment_id)
             if reg_id is None:
                 continue
 
-            seg_df = baseline_df[baseline_df["fiidsegmento"] == seg_id]
+            seg_int = self.config.segment_id_int(seg.segment_id)
+            seg_df = baseline_df[baseline_df["fiidsegmento"] == seg_int]
             if seg_df.empty:
-                logger.warning("No baseline data for segment %d", seg_id)
+                logger.warning("No baseline data for segment %s", seg.segment_id)
                 continue
 
-            canonical_vars = CANONICAL_VARIABLES.get(seg_id, [])
-
-            for vname in canonical_vars:
-                var_id = self._variable_map.get((submodel_id, vname))
+            for vname in seg.variables:
+                var_id = self._variable_map.get((seg.segment_id, vname))
                 if var_id is None:
                     continue
 
                 if vname not in seg_df.columns:
-                    logger.warning("Variable '%s' not found in baseline columns (segment %d)", vname, seg_id)
+                    logger.warning(
+                        "Variable '%s' not found in baseline columns (segment %s)",
+                        vname, seg.segment_id,
+                    )
                     continue
 
-                is_categorical = vname == "fisexo"
-
-                if is_categorical:
+                if self.config.is_categorical(vname):
                     all_rows.extend(self._bin_categorical_baseline(
                         seg_df[vname], reg_id, var_id,
                     ))
@@ -372,17 +355,19 @@ class ModelBootstrap:
         en cada query de PSI.  Ambos se calculan aqui y nunca se actualizan
         por separado.
         """
+        sentinel = self.config.missing_sentinel
+        n_bins_target = self.config.num_bins_numeric
         total_records = len(values)
-        null_count = int(values.isna().sum() + (values == MISSING_SENTINEL).sum())
-        clean = values[(values.notna()) & (values != MISSING_SENTINEL)]
+        null_count = int(values.isna().sum() + (values == sentinel).sum())
+        clean = values[(values.notna()) & (values != sentinel)]
 
         if clean.empty:
             return []
 
         try:
-            _, bin_edges = pd.qcut(clean, q=NUM_BINS_NUMERIC, retbins=True, duplicates="drop")
+            _, bin_edges = pd.qcut(clean, q=n_bins_target, retbins=True, duplicates="drop")
         except ValueError:
-            _, bin_edges = pd.cut(clean, bins=NUM_BINS_NUMERIC, retbins=True)
+            _, bin_edges = pd.cut(clean, bins=n_bins_target, retbins=True)
 
         cuts = [float(e) for e in bin_edges]
         var_row = self.session.get(MetaVariables, var_id)
@@ -447,23 +432,25 @@ class ModelBootstrap:
         score_df = baseline_df.dropna(subset=["fnpuntaje"])
 
         all_rows: list[MetaBaselineDistributions] = []
+        score_bins = self.config.score_bins
+        score_bin_labels = self.config.score_bin_labels
+        last_idx = len(score_bins) - 1
 
-        for seg_id in range(1, 12):
-            submodel_id = f"s{seg_id}"
-            score_var_id = self._score_var_map.get(submodel_id)
-            reg_id = self._registry_map.get(submodel_id)
+        for seg in self.config.segments:
+            score_var_id = self._score_var_map.get(seg.segment_id)
+            reg_id = self._registry_map.get(seg.segment_id)
             if score_var_id is None or reg_id is None:
                 continue
 
-            grp = score_df[score_df["fiidsegmento"] == seg_id]
+            seg_int = self.config.segment_id_int(seg.segment_id)
+            grp = score_df[score_df["fiidsegmento"] == seg_int]
             if grp.empty:
                 continue
 
             total_records = len(grp)
             scores = grp["fnpuntaje"]
 
-            last_idx = len(SCORE_BINS) - 1
-            for idx, ((lo, hi), label) in enumerate(zip(SCORE_BINS, SCORE_BIN_LABELS)):
+            for idx, ((lo, hi), label) in enumerate(zip(score_bins, score_bin_labels)):
                 if idx == last_idx:
                     in_bin = scores[(scores >= lo) & (scores <= hi)]
                 else:

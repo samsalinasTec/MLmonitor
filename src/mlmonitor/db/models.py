@@ -72,6 +72,10 @@ class MetaModelRegistry(Base):
     score_min = Column(Integer, default=0)
     score_max = Column(Integer, default=1000)
     feature_count = Column(Integer)
+    # Nombre canónico (variable_name de META_VARIABLES) del target primario para este (sub)modelo.
+    # Ej: "b_malo14_26" para BAZBOOST_V1. Es String, no FK, porque META_VARIABLES está versionada SCD2 y
+    # la FK quedaría apuntando a un registro inválido al cerrar versiones; el variable_name sí es estable.
+    primary_target_variable = Column(String(100), nullable=True)
     training_cutoff_date = Column(Date)
     owner_team = Column(String(100))
     valid_from = Column(Date, nullable=False)

@@ -83,8 +83,11 @@ def main():
         help="Directorio con CSVs raw (default: data/inputs/raw_tables)",
     )
     parser.add_argument(
-        "--model-id", default="BAZBOOST_V1",
-        help="Model ID (default: BAZBOOST_V1)",
+        "--model-id", default=None,
+        help=(
+            "Model ID a procesar. Si se omite, se ejecuta el ETL para todos "
+            "los modelos activos de META_MODEL_REGISTRY (uno por uno)."
+        ),
     )
     parser.add_argument(
         "--serc-file", default=None,
@@ -156,18 +159,38 @@ def main():
         print(f"[etl] Weekly file not found: {weekly_path}")
 
     from mlmonitor.data.incremental_etl import IncrementalETL
+    from mlmonitor.data.model_config import ModelConfig
+    from mlmonitor.data.model_registry import resolve_model_ids
 
+    # Resolver lista de modelos a procesar
     with get_session(engine) as session:
-        etl = IncrementalETL(session, model_id=args.model_id)
-        result = etl.run(execution_week, variables_df, weekly_df)
+        model_ids = resolve_model_ids(session, args.model_id)
+    print(f"[etl] Modelos a procesar: {model_ids}")
 
-    # Show the actual execution week used (may have been auto-detected)
     actual_week = execution_week or (
         IncrementalETL.detect_execution_week(weekly_df) if weekly_df is not None else "unknown"
     )
-    print(f"\n[etl] Resultados para semana {actual_week}:")
-    for key, value in result.items():
-        print(f"  {key:<35} {value:>6}")
+
+    failed: list[tuple[str, str]] = []
+    for model_id in model_ids:
+        print(f"\n[etl] === Modelo: {model_id} ===")
+        try:
+            config = ModelConfig.for_model(model_id)
+            with get_session(engine) as session:
+                etl = IncrementalETL(session, config=config)
+                result = etl.run(execution_week, variables_df, weekly_df)
+            print(f"[etl] Resultados para semana {actual_week}:")
+            for key, value in result.items():
+                print(f"  {key:<35} {value:>6}")
+        except Exception as e:
+            print(f"[etl] ✗ Modelo {model_id} falló: {e}")
+            failed.append((model_id, str(e)))
+
+    if failed:
+        print(f"\n[etl] {len(failed)}/{len(model_ids)} modelos fallaron:")
+        for mid, err in failed:
+            print(f"  ✗ {mid}: {err}")
+        sys.exit(1)
 
     print("\n[etl] ETL incremental completado.")
 

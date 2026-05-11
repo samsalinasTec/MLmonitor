@@ -32,10 +32,18 @@ logging.basicConfig(level=logging.INFO, format="%(levelname)s | %(message)s")
 
 def main():
     parser = argparse.ArgumentParser(description="Bootstrap: inicializa META tables y distribuciones baseline")
+    parser.add_argument(
+        "--model-id", required=True,
+        help=(
+            "ID del modelo a registrar (ej: BAZBOOST_V1). Va a META_MODEL_REGISTRY.model_id. "
+            "El resto de la configuración (primary_target, segments, variables, score_bins, etc.) "
+            "se carga de data/inputs/model_configs/<model_id_lowercase>/config.json."
+        ),
+    )
     parser.add_argument("--db-url", default=None, help="URL de la base de datos")
     parser.add_argument(
         "--raw-dir", default=None,
-        help="Directorio con CSVs raw (default: data/inputs/raw_tables)",
+        help="Directorio con CSVs raw para datos semanales (default: data/inputs/raw_tables)",
     )
     parser.add_argument(
         "--baseline-file", default=None,
@@ -52,8 +60,14 @@ def main():
     project_root = Path(__file__).parent.parent
     raw_dir = Path(args.raw_dir) if args.raw_dir else project_root / "data" / "inputs" / "raw_tables"
 
+    from mlmonitor.data.model_config import ModelConfig
+    config = ModelConfig.for_model(args.model_id)
+
     print(f"[bootstrap] DB: {db_url}")
     print(f"[bootstrap] Raw dir: {raw_dir}")
+    print(f"[bootstrap] Model ID: {config.model_id}")
+    print(f"[bootstrap] Config dir: {config.config_dir}")
+    print(f"[bootstrap] Primary target: {config.primary_target}")
 
     engine = create_db_engine(db_url)
 
@@ -65,6 +79,7 @@ def main():
     with get_session(engine) as session:
         bootstrap = ModelBootstrap(
             session,
+            config=config,
             raw_dir=raw_dir,
             baseline_filename=args.baseline_file,
         )

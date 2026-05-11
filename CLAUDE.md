@@ -68,13 +68,21 @@ Todos los comandos se ejecutan desde `mlmonitor/`.
 poetry env use /opt/homebrew/bin/python3.11
 poetry install --with pipeline,dev
 
-# Inicialización única: crea tablas, carga META y baseline
-poetry run python scripts/run_bootstrap.py
+# Inicialización única por modelo: crea tablas, carga META y baseline.
+# Se requiere --model-id (declara qué modelo se está bootstrapeando); el resto
+# de la config (primary_target, segments, variables, etc.) se lee de
+# data/inputs/model_configs/<model_id_lowercase>/config.json.
+# bootstrap_v2 (oficial) usa baseline derivado de variables_serc; bootstrap legacy
+# usa base_train_test_bb.csv. Ver ADR §8.2.29 y §8.2.30.
+poetry run python scripts/run_bootstrap_v2.py --model-id BAZBOOST_V1
 
-# ETL semanal (auto-detecta semana si no se pasa --date)
+# ETL semanal — sin --model-id, itera sobre TODOS los modelos activos en
+# META_MODEL_REGISTRY (comportamiento default deseado para multi-modelo).
+# Auto-detecta la semana si no se pasa --date.
 poetry run python scripts/run_incremental_etl.py --date 2026-01-05
 
 # Pipeline: cálculo de métricas + PDF (+ S3 + SES si hay credenciales)
+# Mismo patrón de auto-detección plural sobre los modelos activos.
 poetry run python scripts/run_pipeline.py --date 2026-01-05
 poetry run python scripts/run_pipeline.py --date 2026-01-05 --no-email --no-llm
 
@@ -83,8 +91,16 @@ poetry run pytest
 poetry run pytest tests/test_psi.py -v
 
 # Reset de DB local (si cambió el schema)
-rm mlmonitor_dev.db && poetry run python scripts/run_bootstrap.py
+rm mlmonitor_dev.db && poetry run python scripts/run_bootstrap_v2.py --model-id BAZBOOST_V1
 ```
+
+**Para agregar un modelo nuevo** (ej. `RIESGO_OPERACIONAL_V1`):
+1. Crear `data/inputs/model_configs/riesgo_operacional_v1/` con:
+   - `config.json` (estructura: ver `bazboost_v1/config.json` como plantilla; campos requeridos en ADR §8.2.30).
+   - `variable_descriptions.csv`, `segment_descriptions.csv`, `thresholds.csv`.
+2. Versionar los 4 archivos en git (la excepción del `.gitignore` ya está configurada).
+3. Re-bootstrap con `--model-id RIESGO_OPERACIONAL_V1`. La DB queda con dos modelos activos.
+4. El cron semanal (sin `--model-id`) procesa ambos automáticamente.
 
 Fechas útiles de datos dummy: semana 20 = `2026-01-05` (anomalías visibles), semana 8 = `2025-10-13` (última con outcomes de performance).
 

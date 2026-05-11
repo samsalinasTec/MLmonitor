@@ -27,6 +27,10 @@ ls -lh "${RAW_DIR}/"
 #   SKIP_ETL=1           → salta el ETL (regenera solo PDF si datos ya están en RDS)
 #   NO_EMAIL=1           → pasa --no-email al pipeline
 #   NO_LLM=1             → pasa --no-llm al pipeline
+#   MODEL_ID=<id>        → procesa solo ese modelo. Sin esta variable, ambos
+#                          scripts iteran sobre todos los modelos activos en
+#                          META_MODEL_REGISTRY. Comportamiento default deseado
+#                          para el cron semanal multi-modelo.
 # Ver ADR §8.2.21 y docs/curso/12_operacion_diaria.md.
 
 DATE_ARG=""
@@ -35,14 +39,20 @@ if [ -n "${RUN_DATE:-}" ]; then
   echo "[entrypoint] RUN_DATE override: ${RUN_DATE}"
 fi
 
+MODEL_ARG=""
+if [ -n "${MODEL_ID:-}" ]; then
+  MODEL_ARG="--model-id ${MODEL_ID}"
+  echo "[entrypoint] MODEL_ID override: ${MODEL_ID}"
+fi
+
 if [ "${SKIP_ETL:-0}" = "1" ]; then
   echo "[entrypoint] SKIP_ETL=1, saltando ETL."
 else
-  echo "[entrypoint] ETL incremental ${DATE_ARG}..."
-  poetry run python scripts/run_incremental_etl.py ${DATE_ARG}
+  echo "[entrypoint] ETL incremental ${DATE_ARG} ${MODEL_ARG}..."
+  poetry run python scripts/run_incremental_etl.py ${DATE_ARG} ${MODEL_ARG}
 fi
 
-PIPELINE_FLAGS="${DATE_ARG}"
+PIPELINE_FLAGS="${DATE_ARG} ${MODEL_ARG}"
 [ "${NO_EMAIL:-0}" = "1" ] && PIPELINE_FLAGS="${PIPELINE_FLAGS} --no-email" && echo "[entrypoint] NO_EMAIL=1"
 [ "${NO_LLM:-0}" = "1" ]   && PIPELINE_FLAGS="${PIPELINE_FLAGS} --no-llm"   && echo "[entrypoint] NO_LLM=1"
 

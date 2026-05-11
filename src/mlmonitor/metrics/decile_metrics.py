@@ -322,7 +322,7 @@ def persist_deciles_history(
 def check_decile_ordering_violations(
     decile_table: pd.DataFrame,
     ascending: bool,
-    tol: float = 0.005,
+    tol: float = 0.001,
 ) -> dict:
     """Cuenta violaciones de monotonía sobre event_rate ordenado por decil.
 
@@ -332,7 +332,11 @@ def check_decile_ordering_violations(
     (ascending=True) debe CRECER.
 
     Tolerancia: diferencias menores a `tol` en valor absoluto no se cuentan
-    (ruido). Mismo umbral histórico que la versión sobre bins fijos.
+    (ruido). Default 0.001 (0.1pp): los `event_rate` típicos viven en 0.03-0.20,
+    así que esta tolerancia detecta inversiones reales visibles en la gráfica
+    sin disparar por ruido de muestreo. La versión legacy sobre bins fijos
+    usaba 0.005 porque comparaba sobre 21 buckets más estrechos; en deciles
+    cada bucket es 10% de la población y los efectos de muestreo son menores.
 
     Args:
         decile_table: DataFrame con columnas `decile` y `event_rate` (al menos).

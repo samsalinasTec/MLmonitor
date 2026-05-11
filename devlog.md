@@ -6,6 +6,15 @@ Formato: encabezado por fecha ISO (`## YYYY-MM-DD`) + bullets cortos. Entradas m
 
 ---
 
+## 2026-05-11
+
+- **Fix post-merge iter-2: tolerancia de violaciones por decil de 0.005 → 0.001.** Reporte del usuario sobre Image #2: s2 b_malo14_26 marcaba 1 violación, pero visualmente se ven varios saltos (decil 6→7, etc.). Diagnóstico: la tolerancia 0.005 viene de la versión sobre 21 bins fijos del scorecard, donde un salto de 0.5pp era ruido. En deciles cada bucket es 10% de la población y los efectos de muestreo son menores; saltos de 0.1pp ya son señal real visible en la gráfica. Bajado el default a `0.001` (0.1pp) y se actualizó docstring para justificarlo.
+  - **Verificación**: s2 b_malo14_26 pasó de 1 a 3 violaciones detectadas (deciles 3→4 +1.13pp, 6→7 +0.71pp, 8→9 +1.33pp — todas visibles en la gráfica). s3 b_malo4_6 sigue en 0 violaciones: el aparente "decil 7 igual al 6" en la imagen es en realidad decil 7 = 3.587% vs decil 6 = 3.595% (Δ = -0.008pp, decreciendo casi plano pero NO sube). El cálculo es correcto, la lectura visual confundía planitud con inversión.
+  - **Tests:** ajustados 2 casos en `test_decile_ordering.py` para el nuevo default + nuevo `test_tolerance_default_is_one_per_mille`. Suite: 147 passed.
+  - **No es bug reportado pero investigado: Gini/KS desaparecidos en algunos segmentos del PDF.** Verifiqué que el código del refactor T3 NO toca la lógica de cálculo/persistencia de Gini/KS. En un flujo end-to-end limpio (`rm mlmonitor_dev.db` + bootstrap_v2 + 4 ETLs + run_pipeline) los 11 segmentos persisten gini_b_malo*/ks_b_malo* en `FACT_METRICS_HISTORY`. En mi PRIMERA corrida post-merge sí vi el síntoma (faltaban filas Gini/KS) — repro intermitente, probablemente por estado previo de la BD (`mlmonitor_dev.db` venía modificado desde antes del checkout). El filtro de duplicados en `run_for_model:186` (`if existing is None: session.add(row)`) puede saltar filas si una corrida parcial previa dejó la combinación `(model_registry_id, calc_week, metric_id)` con datos pero el flush completo falló. **Acción**: si el usuario ve el síntoma en su entorno, primer paso es re-correr el pipeline desde una BD limpia o borrar las filas para esa `calculation_week` antes del run. Si persiste tras re-run, hay que reproducir con más logs.
+
+---
+
 ## 2026-05-10
 
 - **Iteración 2** (`feature/iter-2-leyenda-deciles-global`): 4 cambios al reporte PDF. Plan en `~/.claude/plans/lee-los-docs-claude-md-refactored-kazoo.md`.

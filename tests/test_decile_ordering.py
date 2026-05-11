@@ -70,15 +70,23 @@ class TestCheckDecileOrderingViolations:
         assert (8, 9) in deciles
 
     def test_tolerance_prevents_false_positives(self):
-        """Diferencias menores al tol (0.005) no cuentan."""
-        df = _make_decile_table([0.10] * 10)  # constante
+        """Constante (todos iguales) → 0 violaciones, sin importar el tol."""
+        df = _make_decile_table([0.10] * 10)
         result = check_decile_ordering_violations(df, ascending=False)
         assert result["violations"] == 0
 
+    def test_tolerance_default_is_one_per_mille(self):
+        """tol default = 0.001: detecta saltos de 0.1pp en adelante."""
+        # Salto de 0.0015 (0.15pp): debe contar como violación
+        df = _make_decile_table([0.50, 0.40, 0.30, 0.22, 0.18, 0.1815, 0.10, 0.07, 0.05, 0.03])
+        result = check_decile_ordering_violations(df, ascending=False)
+        assert result["violations"] == 1
+
     def test_tolerance_custom(self):
-        """tol más laxo deja pasar pequeñas inversiones."""
+        """tol más laxo deja pasar pequeñas inversiones; más estricto las detecta."""
         df = _make_decile_table([0.50, 0.40, 0.30, 0.22, 0.18, 0.20, 0.10, 0.07, 0.05, 0.03])
-        strict = check_decile_ordering_violations(df, ascending=False, tol=0.005)
+        # Salto 0.18→0.20 = 0.02 (2pp)
+        strict = check_decile_ordering_violations(df, ascending=False, tol=0.001)
         loose = check_decile_ordering_violations(df, ascending=False, tol=0.05)
         assert strict["violations"] == 1
         assert loose["violations"] == 0

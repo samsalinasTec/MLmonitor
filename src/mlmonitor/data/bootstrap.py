@@ -5,10 +5,13 @@ Separa la logica de inicializacion del ETL incremental semanal:
 - META_MODEL_REGISTRY: una fila por segmento (los segmentos vienen del config del modelo)
 - META_VARIABLES: input + output (score) + target por segmento
 - META_METRIC_THRESHOLDS: umbrales por segmento (desde thresholds.csv del modelo)
-- META_BASELINE_DISTRIBUTIONS: distribuciones del baseline de entrenamiento (WIDE)
+- META_BASELINE_DISTRIBUTIONS: distribuciones del baseline derivado de las
+  primeras N semanas ISO del año configurado dentro de `variables_serc_*.csv`
+  (formato LONG). Ver ADR §8.2.29 — V2 oficial; el path WIDE legacy
+  (`base_train_test_bb.csv`) se retiró en Iteración 2 (D7).
 
 Toda la configuración estática del modelo (variables, segmentos, targets, score_bins,
-nombres, tipos de variables categóricas, etc.) vive en
+nombres, tipos de variables categóricas, missing_sentinel, etc.) vive en
 `data/inputs/model_configs/<model_id>/config.json`. Ver `data/model_config.py`
 y la ADR §8.2.30.
 
@@ -35,6 +38,16 @@ from mlmonitor.db.models import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+_SERC_USECOLS = [
+    "fiidscoreds",
+    "fiidsegmento",
+    "fnpuntaje",
+    "fcnombre_variable",
+    "fcvalor_variable",
+    "fdregistro_solicitud",
+]
 
 
 def _load_variable_descriptions(csv_path: Path) -> dict[str, str]:
@@ -82,19 +95,36 @@ def _load_segment_descriptions(csv_path: Path) -> dict[int, str]:
 
 
 class ModelBootstrap:
-    """Inicializa META tables y distribucion de referencia (una sola vez)."""
+    """Inicializa META tables y distribucion de referencia (una sola vez).
+
+    El baseline se deriva de las primeras `baseline_n_weeks` semanas ISO del
+    año `baseline_year` dentro de `variables_serc_*.csv` (LONG). Antes de
+    Iteración 2 (D7) existía un path paralelo `ModelBootstrapV2` con esta
+    misma lógica; al promoverse V2 a oficial (ADR §8.2.29) la subclase
+    desapareció y su lógica vive aquí.
+    """
 
     def __init__(
         self,
         session: Session,
         config: ModelConfig,
         raw_dir: str | Path = "data/inputs/raw_tables",
-        baseline_filename: str | None = None,
+        variables_serc_filename: str | None = None,
+        baseline_year: int | None = None,
+        baseline_n_weeks: int | None = None,
     ):
         self.session = session
         self.config = config
         self.raw_dir = Path(raw_dir)
-        self._baseline_filename = baseline_filename
+        self._variables_serc_filename = variables_serc_filename
+        # Ventana del baseline: si el caller no la pasa, leer del ModelConfig.
+        # CLI flags (--year, --n-weeks) tienen precedencia sobre el JSON.
+        self.baseline_year = (
+            baseline_year if baseline_year is not None else config.baseline_year
+        )
+        self.baseline_n_weeks = (
+            baseline_n_weeks if baseline_n_weeks is not None else config.baseline_n_weeks
+        )
 
         # Mapas internos poblados durante el bootstrap
         self._registry_map: dict[str, int] = {}      # submodel_id -> surrogate id
@@ -104,15 +134,6 @@ class ModelBootstrap:
         # Description lookups from CSVs en el directorio del config del modelo
         self._variable_descriptions = _load_variable_descriptions(config.variable_descriptions_csv)
         self._segment_descriptions = _load_segment_descriptions(config.segment_descriptions_csv)
-
-    def _resolve_baseline_path(self) -> Path:
-        """Resolve baseline CSV path: explicit name > glob > fallback."""
-        if self._baseline_filename:
-            return self.raw_dir / self._baseline_filename
-        candidates = sorted(self.raw_dir.glob("base_train_test_bb*.csv"))
-        if candidates:
-            return candidates[0]
-        return self.raw_dir / "base_train_test_bb.csv"
 
     def run(self) -> dict:
         """Ejecuta bootstrap completo: META + distribuciones baseline.
@@ -124,6 +145,7 @@ class ModelBootstrap:
         counts["META_MODEL_REGISTRY"] = self._populate_meta_model_registry()
         counts["META_VARIABLES"] = self._populate_meta_variables()
         counts["META_METRIC_THRESHOLDS"] = self._populate_meta_metric_thresholds()
+        counts["META_AGGREGATION_RULES"] = self._populate_meta_aggregation_rules()
         counts["META_BASELINE_DISTRIBUTIONS"] = self._populate_baseline_distributions()
         return counts
 
@@ -241,6 +263,19 @@ class ModelBootstrap:
         logger.info("META_VARIABLES: %d rows", len(rows))
         return len(rows)
 
+    def _populate_meta_aggregation_rules(self) -> int:
+        """Siembra las reglas globales de severidad (`status_*_count_*`).
+
+        Idempotente; ver `data.aggregation_rules.seed_default_global_rules`.
+        Se siembran como globales (`model_registry_id=NULL`) — overrides
+        por modelo se introducen recién cuando se necesiten.
+        """
+        from mlmonitor.data.aggregation_rules import seed_default_global_rules
+
+        inserted = seed_default_global_rules(self.session, valid_from=date(2025, 1, 1))
+        logger.info("META_AGGREGATION_RULES: %d rows seeded", inserted)
+        return inserted
+
     def _populate_meta_metric_thresholds(self) -> int:
         """Persiste thresholds per-segmento desde el CSV de crédito.
 
@@ -275,35 +310,89 @@ class ModelBootstrap:
     # Distribuciones de referencia (META_BASELINE_DISTRIBUTIONS)
     # ------------------------------------------------------------------
 
+    def _resolve_variables_serc_path(self) -> Path:
+        if self._variables_serc_filename:
+            return self.raw_dir / self._variables_serc_filename
+        candidates = sorted(self.raw_dir.glob("variables_serc_*.csv"))
+        if not candidates:
+            raise FileNotFoundError(
+                f"No se encontró variables_serc_*.csv en {self.raw_dir}"
+            )
+        # último lexicográfico = más reciente (convención <prefix>_<YYYYMMDD>_*)
+        return candidates[-1]
+
+    def _baseline_weeks(self) -> list[date]:
+        """Lista de Mondays ISO para las primeras N semanas del año configurado."""
+        return [
+            date.fromisocalendar(self.baseline_year, w, 1)
+            for w in range(1, self.baseline_n_weeks + 1)
+        ]
+
+    def _load_serc_baseline_window(self) -> pd.DataFrame:
+        """Lee variables_serc y filtra a las primeras N semanas ISO del año."""
+        path = self._resolve_variables_serc_path()
+        logger.info("Loading variables_serc from %s", path)
+        df = pd.read_csv(path, usecols=_SERC_USECOLS, low_memory=False)
+        logger.info("Raw variables_serc shape: %s", df.shape)
+
+        ts = pd.to_datetime(df["fdregistro_solicitud"], unit="ms", errors="coerce")
+        iso = ts.dt.isocalendar()  # year, week, day
+        df["_iso_year"] = iso["year"].astype("Int64")
+        df["_iso_week"] = iso["week"].astype("Int64")
+
+        weeks_target = list(range(1, self.baseline_n_weeks + 1))
+        mask = (df["_iso_year"] == self.baseline_year) & (df["_iso_week"].isin(weeks_target))
+        out = df.loc[mask].copy()
+
+        # Derivar Monday ISO para alinearse con resto del código (no se persiste,
+        # solo informa logs/filtrado fino si fuera necesario).
+        out["_origination_week"] = [
+            date.fromisocalendar(int(y), int(w), 1)
+            for y, w in zip(out["_iso_year"], out["_iso_week"])
+        ]
+
+        n_creditos = out["fiidscoreds"].nunique()
+        logger.info(
+            "Baseline window (year=%d, weeks=1..%d): %d rows, %d unique creditos",
+            self.baseline_year, self.baseline_n_weeks, len(out), n_creditos,
+        )
+        return out
+
     def _populate_baseline_distributions(self) -> int:
-        """Calcula bins y distribuciones desde el baseline de entrenamiento (WIDE).
+        """Carga ventana de baseline desde variables_serc y deriva distribuciones.
 
-        El baseline es un CSV con formato WIDE: una fila por credito,
-        variables canonicas como columnas directas.  Contrasta con
-        variables_serc (LONG).
-
-        - Numericas: qcut sobre baseline → fixed_cuts en META_VARIABLES.binning_rules
+        - Numericas: qcut sobre la ventana → fixed_cuts en META_VARIABLES.binning_rules
         - Categoricas: categorias directas → META_VARIABLES.woe_categories
-        - Score: bins fijos de SCORE_BIN_CUTS (ya en META_VARIABLES)
+        - Score: bins fijos de score_bin_cuts (ya en META_VARIABLES, no se recalcula)
         - Distribuciones → META_BASELINE_DISTRIBUTIONS
         """
-        baseline_path = self._resolve_baseline_path()
-
-        if not baseline_path.exists():
-            logger.warning("Baseline file not found: %s — skipping baseline distributions", baseline_path)
+        baseline_df = self._load_serc_baseline_window()
+        if baseline_df.empty:
+            logger.warning(
+                "Baseline ventana vacía para year=%d weeks=1..%d — sin filas insertadas",
+                self.baseline_year, self.baseline_n_weeks,
+            )
             return 0
 
-        logger.info("Loading baseline %s for reference distributions", baseline_path)
-        baseline_df = pd.read_csv(baseline_path, low_memory=False)
-        logger.info("Baseline shape: %s", baseline_df.shape)
+        # Map SERC → canonical y descarta filas no canónicas
+        baseline_df["_canonical"] = baseline_df["fcnombre_variable"].apply(
+            self.config.serc_to_canonical
+        )
+        canonical_df = baseline_df.dropna(subset=["_canonical"]).copy()
 
-        total_rows = 0
-        total_rows += self._baseline_variable_distributions(baseline_df)
-        total_rows += self._baseline_score_distributions(baseline_df)
-        return total_rows
+        # Preserva valor original (categóricas) y convierte numérico
+        canonical_df["_fcvalor_original"] = canonical_df["fcvalor_variable"]
+        canonical_df["fcvalor_variable"] = pd.to_numeric(
+            canonical_df["fcvalor_variable"], errors="coerce"
+        )
 
-    def _baseline_variable_distributions(self, baseline_df: pd.DataFrame) -> int:
-        """Calcula y persiste distribucion baseline para variables input."""
+        total = 0
+        total += self._baseline_variable_distributions(canonical_df)
+        total += self._baseline_score_distributions(baseline_df)
+        return total
+
+    def _baseline_variable_distributions(self, df: pd.DataFrame) -> int:
+        """Variables input: numéricas → qcut + cuts; categóricas → categorías directas."""
         all_rows: list[MetaBaselineDistributions] = []
 
         for seg in self.config.segments:
@@ -312,9 +401,9 @@ class ModelBootstrap:
                 continue
 
             seg_int = self.config.segment_id_int(seg.segment_id)
-            seg_df = baseline_df[baseline_df["fiidsegmento"] == seg_int]
+            seg_df = df[df["fiidsegmento"] == seg_int]
             if seg_df.empty:
-                logger.warning("No baseline data for segment %s", seg.segment_id)
+                logger.warning("No baseline data for segment %s in window", seg.segment_id)
                 continue
 
             for vname in seg.variables:
@@ -322,37 +411,35 @@ class ModelBootstrap:
                 if var_id is None:
                     continue
 
-                if vname not in seg_df.columns:
+                var_rows = seg_df[seg_df["_canonical"] == vname]
+                if var_rows.empty:
                     logger.warning(
-                        "Variable '%s' not found in baseline columns (segment %s)",
+                        "Variable '%s' no encontrada en window (segmento %s)",
                         vname, seg.segment_id,
                     )
                     continue
 
                 if self.config.is_categorical(vname):
-                    all_rows.extend(self._bin_categorical_baseline(
-                        seg_df[vname], reg_id, var_id,
-                    ))
+                    series = var_rows["_fcvalor_original"]
+                    all_rows.extend(self._bin_categorical_baseline(series, reg_id, var_id))
                 else:
-                    all_rows.extend(self._bin_numeric_baseline(
-                        seg_df[vname], reg_id, var_id,
-                    ))
+                    series = var_rows["fcvalor_variable"]
+                    all_rows.extend(self._bin_numeric_baseline(series, reg_id, var_id))
 
         if all_rows:
             self.session.add_all(all_rows)
             self.session.flush()
-
         logger.info("META_BASELINE_DISTRIBUTIONS (variables): %d rows", len(all_rows))
         return len(all_rows)
 
     def _bin_numeric_baseline(
         self, values: pd.Series, reg_id: int, var_id: int,
     ) -> list[MetaBaselineDistributions]:
-        """Calcula quantile bins desde baseline, persiste cuts, retorna distribucion.
+        """qcut sobre la ventana baseline; persiste cuts en MetaVariables.binning_rules.
 
         bin_percentage se calcula como bin_count / len(clean) y se guarda
         redundante junto con bin_count y total_records para evitar el computo
-        en cada query de PSI.  Ambos se calculan aqui y nunca se actualizan
+        en cada query de PSI. Ambos se calculan aqui y nunca se actualizan
         por separado.
         """
         sentinel = self.config.missing_sentinel
@@ -428,8 +515,17 @@ class ModelBootstrap:
         return rows
 
     def _baseline_score_distributions(self, baseline_df: pd.DataFrame) -> int:
-        """Distribucion baseline del score total por segmento."""
-        score_df = baseline_df.dropna(subset=["fnpuntaje"])
+        """Score: dedup por fiidscoreds dentro de la ventana, bins fijos por segmento."""
+        # Dedup: un score por crédito
+        score_df = (
+            baseline_df.groupby("fiidscoreds")
+            .agg(
+                fiidsegmento=("fiidsegmento", "first"),
+                fnpuntaje=("fnpuntaje", "first"),
+            )
+            .reset_index()
+            .dropna(subset=["fnpuntaje"])
+        )
 
         all_rows: list[MetaBaselineDistributions] = []
         score_bins = self.config.score_bins
@@ -457,7 +553,6 @@ class ModelBootstrap:
                     in_bin = scores[(scores >= lo) & (scores < hi)]
                 count = len(in_bin)
                 pct = count / total_records if total_records > 0 else 0.0
-
                 all_rows.append(MetaBaselineDistributions(
                     model_registry_id=reg_id,
                     variable_id=score_var_id,
@@ -471,6 +566,5 @@ class ModelBootstrap:
         if all_rows:
             self.session.add_all(all_rows)
             self.session.flush()
-
         logger.info("META_BASELINE_DISTRIBUTIONS (scores): %d rows", len(all_rows))
         return len(all_rows)

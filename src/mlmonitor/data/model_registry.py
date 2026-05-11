@@ -46,7 +46,6 @@ def resolve_model_ids(session: Session, explicit: str | None) -> list[str]:
         raise ValueError(
             "No hay modelos activos en META_MODEL_REGISTRY. "
             "¿Olvidaste correr el bootstrap? "
-            "Ejecuta: poetry run python scripts/run_bootstrap_v2.py "
-            "--model-id <ID> --primary-target <target>"
+            "Ejecuta: poetry run python scripts/run_bootstrap.py --model-id <ID>"
         )
     return sorted(model_ids)

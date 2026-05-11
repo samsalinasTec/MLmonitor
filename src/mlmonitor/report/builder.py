@@ -24,6 +24,7 @@ from mlmonitor.db.models import (
 )
 from mlmonitor.metrics.business_metrics import get_business_metrics_table
 from mlmonitor.metrics.decile_metrics import load_per_target_deciles
+from mlmonitor.metrics.performance import get_gini_ks_global
 from mlmonitor.report.charts import (
     render_consolidated_decile_chart,
     render_per_target_decile_chart,
@@ -337,6 +338,27 @@ class ReportBuilder:
             "critical": sum(1 for s in segments if s.overall_status == "CRITICAL"),
         }
 
+        # Gini/KS global por target — combina la población de TODOS los segmentos
+        # para una origination_week (= calculation_week − lag). Score invertido
+        # por crédito según el score_max de su segmento (robusto a futuros
+        # modelos donde varíe; hoy BAZBOOST_V1 lo tiene uniforme).
+        score_max_by_registry = {r.id: (r.score_max or 1000) for r in model_regs}
+        global_performance: list[dict] = []
+        for tv in sorted(all_targets, key=lambda v: v.lag_semanas):
+            origination_week = calculation_week - timedelta(weeks=tv.lag_semanas)
+            gk = get_gini_ks_global(
+                self.session,
+                model_id,
+                origination_week,
+                tv.variable_name,
+                score_max_by_registry,
+            )
+            global_performance.append({
+                "target": tv.variable_name,
+                "origination_week": origination_week,
+                **gk,
+            })
+
         context = AnalysisContext(
             model_id=model_id,
             model_name=model_name,
@@ -350,6 +372,7 @@ class ReportBuilder:
             performance_weeks=performance_weeks,
             primary_target=resolved_primary_target,
             severity_legend=_build_severity_legend(),
+            global_performance=global_performance,
         )
 
         # Llamada al LLM si hay analista

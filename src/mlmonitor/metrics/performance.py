@@ -18,7 +18,11 @@ import numpy as np
 import pandas as pd
 from sqlalchemy.orm import Session
 
-from mlmonitor.db.models import FactPerformanceBinned, FactPerformanceIndividual
+from mlmonitor.db.models import (
+    FactPerformanceBinned,
+    FactPerformanceIndividual,
+    MetaModelRegistry,
+)
 
 
 def _build_performance_df(
@@ -178,6 +182,84 @@ def _build_performance_df_individual(
     # Invertir score: bajo score = alto riesgo -> inverted alto
     df["score_inverted"] = score_max - df["fnpuntaje"]
     return df.sort_values("score_inverted", ascending=False).reset_index(drop=True)
+
+
+def get_gini_ks_global(
+    session: Session,
+    model_id: str,
+    origination_week: date,
+    target_name: str,
+    score_max_by_registry: dict[int, int] | None = None,
+) -> dict[str, float | int | None]:
+    """Gini/KS sobre la población combinada de TODOS los segmentos del modelo.
+
+    Carga FACT_PERFORMANCE_INDIVIDUAL filtrando por todos los model_registry_id
+    activos del modelo (`valid_to IS NULL`) para una origination_week y target
+    específicos. Invierte el score de cada crédito según el `score_max` de SU
+    segmento (`score_inverted = score_max[registry_id] - fnpuntaje`), de modo
+    que la población queda comparable aunque distintos segmentos usen rangos
+    distintos. Luego rankea todo en conjunto y reutiliza
+    `compute_gini_ks_individual`.
+
+    Args:
+        session: SQLAlchemy session.
+        model_id: identificador del modelo (ej. "BAZBOOST_V1").
+        origination_week: semana de surtimiento (= calculation_week - lag).
+        target_name: nombre del target (`ventana` en FACT_PERFORMANCE_INDIVIDUAL).
+        score_max_by_registry: mapa {model_registry_id: score_max}. Si es None,
+            se resuelve consultando META_MODEL_REGISTRY.
+
+    Returns:
+        {"gini", "ks", "auc", "n_obs"}. Cuando no hay datos:
+        {"gini": None, "ks": None, "auc": None, "n_obs": 0}.
+    """
+    # Resolver mapa de score_max por segmento si no se proveyó.
+    if score_max_by_registry is None:
+        regs = (
+            session.query(MetaModelRegistry)
+            .filter(
+                MetaModelRegistry.model_id == model_id,
+                MetaModelRegistry.valid_to.is_(None),
+            )
+            .all()
+        )
+        score_max_by_registry = {r.id: (r.score_max or 1000) for r in regs}
+
+    if not score_max_by_registry:
+        return {"gini": None, "ks": None, "auc": None, "n_obs": 0}
+
+    registry_ids = list(score_max_by_registry.keys())
+    rows = (
+        session.query(FactPerformanceIndividual)
+        .filter(
+            FactPerformanceIndividual.model_registry_id.in_(registry_ids),
+            FactPerformanceIndividual.origination_week == origination_week,
+            FactPerformanceIndividual.ventana == target_name,
+        )
+        .all()
+    )
+    if not rows:
+        return {"gini": None, "ks": None, "auc": None, "n_obs": 0}
+
+    df = pd.DataFrame([
+        {
+            "fnpuntaje": r.fnpuntaje,
+            "flag": r.flag,
+            "model_registry_id": r.model_registry_id,
+        }
+        for r in rows
+    ])
+    df = df.dropna(subset=["fnpuntaje"]).reset_index(drop=True)
+    if df.empty:
+        return {"gini": None, "ks": None, "auc": None, "n_obs": 0}
+
+    df["score_inverted"] = (
+        df["model_registry_id"].map(score_max_by_registry) - df["fnpuntaje"]
+    )
+    df = df.sort_values("score_inverted", ascending=False).reset_index(drop=True)
+
+    metrics = compute_gini_ks_individual(df)
+    return {**metrics, "n_obs": len(df)}
 
 
 def compute_gini_ks_individual(df: pd.DataFrame) -> dict[str, float]:

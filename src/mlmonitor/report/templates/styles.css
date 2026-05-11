@@ -211,6 +211,37 @@ table.fleet-status-table td {
     word-break: break-word;
 }
 
+/* Leyenda de severidad: explica las reglas que asignan OK/ADVERTENCIA/CRÍTICO.
+   Comparte estilo con .fleet-status-table pero sin layout fijo (texto fluye). */
+.legend-title {
+    font-size: 11pt;
+    margin: 0.4cm 0 0.15cm 0;
+}
+table.severity-legend-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 8.5pt;
+    margin: 0 0 0.5cm 0;
+}
+table.severity-legend-table th {
+    background: #A8160A;
+    color: white;
+    padding: 0.15cm;
+    text-align: left;
+}
+table.severity-legend-table td {
+    padding: 0.15cm;
+    border: 1px solid #e5e7eb;
+    vertical-align: top;
+}
+.legend-rules {
+    margin: 0;
+    padding-left: 1.2em;
+}
+.legend-rules li {
+    margin: 0.05cm 0;
+}
+
 /* ---- Fleet summary cards ---- */
 .fleet-cards {
     display: flex;

@@ -261,26 +261,48 @@ def _insert_performance_outcomes(session, registry_map, var_id_map):
 
 
 def _insert_performance_individual(session, registry_map):
+    """Inserta créditos individuales con suficiente volumen para que `pd.qcut`
+    pueda construir 10 deciles (DECILE_MIN_OBS = 100). Cada bin del scorecard
+    aporta `CREDITS_PER_BIN` créditos con score = midpoint del bin, así los
+    buckets de qcut coinciden 1-a-1 con los bins originales y los patrones
+    diseñados por bin (event_rate por bin) son visibles también por decil.
+
+    Patrones:
+    - s1: tasas decrecientes monotónicas con el score (modelo bien ordenado).
+    - s2: inversión clara entre bin 3 y bin 4 (event_rate sube en lugar de
+      bajar) — produce ≥1 violación de orden tanto en bins fijos como en
+      deciles.
+    """
     rows = []
     origination_week = WEEK_0                       # semana de surtimiento (Date)
     execution_week = _week_date(TARGET_LAG)          # semana de observacion (Date)
+    CREDITS_PER_BIN = 25  # 25 × 10 bins = 250 créditos por segmento (> min_obs)
 
     for seg_id, reg_id in registry_map.items():
-        for i, (score_bin, midpoint) in enumerate(SCORE_BINS):
+        for i, (_score_bin, midpoint) in enumerate(SCORE_BINS):
             if seg_id == "s1":
-                flag = 1 if i < 5 else 0  # eventos en bins de score bajo
+                # Tasas decrecientes monotónicas (bin 1=0.80, bin 10=0.08)
+                event_rate = max(0.01, 0.80 - i * 0.08)
             else:
-                flag = 1 if i in (2, 3) else 0  # inversion para testing
+                # s2: inversión bin 3↔4 (rate cae a 0.30 y luego sube a 0.60)
+                if i == 2:
+                    event_rate = 0.30
+                elif i == 3:
+                    event_rate = 0.60
+                else:
+                    event_rate = max(0.01, 0.80 - i * 0.08)
 
-            rows.append(FactPerformanceIndividual(
-                credito_id=f"{seg_id}_credit_{i:03d}",
-                model_registry_id=reg_id,
-                origination_week=origination_week,
-                execution_week=execution_week,
-                fnpuntaje=float(midpoint),
-                ventana=TARGET_NAME,
-                flag=flag,
-            ))
+            n_events = int(round(CREDITS_PER_BIN * event_rate))
+            for k in range(CREDITS_PER_BIN):
+                rows.append(FactPerformanceIndividual(
+                    credito_id=f"{seg_id}_credit_{i:02d}_{k:03d}",
+                    model_registry_id=reg_id,
+                    origination_week=origination_week,
+                    execution_week=execution_week,
+                    fnpuntaje=float(midpoint),
+                    ventana=TARGET_NAME,
+                    flag=1 if k < n_events else 0,
+                ))
     session.add_all(rows)
     session.flush()
 

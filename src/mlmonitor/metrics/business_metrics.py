@@ -1,15 +1,9 @@
 """
-Métricas de negocio: tasas de target por decil de score.
+Métricas de negocio: tasas de target por decil de score (heatmap del PDF).
 
-Reglas de ordenamiento:
-- Tasas de malo (incumplimiento): deben DECRECER conforme sube el score
-  (bajo score = alto riesgo)
-- Tasas de pago: deben CRECER conforme sube el score
-
-La dirección esperada se lee de MetaVariables.ascending_order por target.
-
-check_ordering_violations(): cuenta el número de bins consecutivos donde
-la métrica viola la monotonía esperada.
+Las violaciones de orden se calculan sobre deciles reales del score continuo
+(ver decile_metrics.py), no sobre los bins fijos del scorecard. Esto módulo
+solo expone la tabla agrupada por bin para el heatmap visual.
 
 Tasas se calculan al vuelo: count_event_real / count_total por metric_type.
 """
@@ -125,107 +119,3 @@ def get_business_metrics_table(
         df[color_col] = colors
 
     return df
-
-
-def check_ordering_violations(
-    df: pd.DataFrame,
-    metric_col: str,
-    ascending: bool,
-) -> dict:
-    """
-    Verifica monotonía de una métrica a lo largo de los bins (ordenados por score asc).
-
-    Args:
-        df: DataFrame con score_midpoint y la métrica
-        metric_col: nombre de la columna de la métrica
-        ascending: True si la métrica debe crecer con el score
-                   False si debe decrecer (b_malo)
-
-    Returns:
-        dict con:
-          - violations: número de violaciones
-          - violation_pairs: lista de (bin_i, bin_j, value_i, value_j)
-    """
-    df_sorted = df.sort_values("score_midpoint").reset_index(drop=True)
-    values = df_sorted[metric_col].tolist()
-    bins = df_sorted["score_bin"].tolist()
-
-    violations = 0
-    violation_pairs = []
-
-    for i in range(len(values) - 1):
-        v_i = values[i]
-        v_j = values[i + 1]
-        if v_i is None or v_j is None:
-            continue
-
-        if ascending:
-            if v_j < v_i - 0.005:
-                violations += 1
-                violation_pairs.append({
-                    "bin_low": bins[i],
-                    "bin_high": bins[i + 1],
-                    "value_low_score_bin": round(v_i, 4),
-                    "value_high_score_bin": round(v_j, 4),
-                })
-        else:
-            if v_j > v_i + 0.005:
-                violations += 1
-                violation_pairs.append({
-                    "bin_low": bins[i],
-                    "bin_high": bins[i + 1],
-                    "value_low_score_bin": round(v_i, 4),
-                    "value_high_score_bin": round(v_j, 4),
-                })
-
-    return {"violations": violations, "violation_pairs": violation_pairs}
-
-
-def get_ordering_violations_for_metric(
-    session: Session,
-    model_registry_id: int,
-    origination_week: date,
-    metric_type: str,
-    ascending: bool = False,
-) -> dict:
-    """
-    Verifica si una variable target viola la monotonía esperada a lo largo de los bins.
-
-    Consulta directamente FACT_PERFORMANCE_BINNED para el target y origination_week
-    específicos (calculator.py ya computa el origination_week correcto por target).
-
-    Args:
-        origination_week: semana de origen (= calculation_week - lag para este target)
-        metric_type: nombre del target (ej: 'b_malo2_4', 'b_malo8_13')
-        ascending: True si debe crecer con score, False si debe decrecer (default)
-
-    Returns:
-        dict con violations y violation_pairs
-    """
-    rows = (
-        session.query(FactPerformanceBinned)
-        .filter(
-            FactPerformanceBinned.model_registry_id == model_registry_id,
-            FactPerformanceBinned.origination_week == origination_week,
-            FactPerformanceBinned.metric_type == metric_type,
-        )
-        .order_by(FactPerformanceBinned.score_midpoint)
-        .all()
-    )
-
-    if not rows:
-        return {"violations": 0, "violation_pairs": []}
-
-    col = f"{metric_type}_rate"
-    data = []
-    for r in rows:
-        total = r.count_total or 0
-        rate = (r.count_event_real / total) if total else None
-        data.append({
-            "score_bin": r.score_bin,
-            "score_midpoint": r.score_midpoint or 0,
-            col: rate,
-        })
-
-    df = pd.DataFrame(data).sort_values("score_midpoint").reset_index(drop=True)
-    return check_ordering_violations(df, col, ascending=ascending)

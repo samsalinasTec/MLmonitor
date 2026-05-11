@@ -62,6 +62,48 @@
     </div>
 </div>
 
+<!-- Métricas globales: Gini/KS sobre la población combinada de todos los segmentos -->
+{% if context.global_performance %}
+<h2>Métricas Globales por Target</h2>
+<p style="font-size:9pt;color:#666;margin-bottom:0.2cm;">
+    Calculadas sobre la población combinada de los {{ context.fleet_summary.total }}
+    segmentos del modelo en la semana de surtimiento de cada target
+    (origination_week = semana de cálculo − lag del target).
+</p>
+<table class="fleet-status-table">
+    <colgroup>
+        <col style="width:25%">
+        <col style="width:16%">
+        <col style="width:12%">
+        <col style="width:12%">
+        <col style="width:12%">
+        <col style="width:23%">
+    </colgroup>
+    <thead>
+        <tr>
+            <th>Target</th>
+            <th>Semana origen</th>
+            <th>Gini</th>
+            <th>KS</th>
+            <th>AUC</th>
+            <th>N créditos</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for gp in context.global_performance %}
+        <tr>
+            <td><code>{{ gp.target }}</code></td>
+            <td>{{ gp.origination_week }}</td>
+            <td>{% if gp.gini is not none %}{{ "%.3f" | format(gp.gini) }}{% else %}—{% endif %}</td>
+            <td>{% if gp.ks is not none %}{{ "%.3f" | format(gp.ks) }}{% else %}—{% endif %}</td>
+            <td>{% if gp.auc is not none %}{{ "%.3f" | format(gp.auc) }}{% else %}—{% endif %}</td>
+            <td>{{ "{:,}".format(gp.n_obs) }}</td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% endif %}
+
 <!-- Tabla de estado de flota -->
 <h2>Estado por Segmento</h2>
 <table class="fleet-status-table">
@@ -110,6 +152,35 @@
         {% endfor %}
     </tbody>
 </table>
+
+<!-- Leyenda de severidad: explica las reglas que asignan OK/ADVERTENCIA/CRÍTICO -->
+{% if context.severity_legend %}
+<h3 class="legend-title">¿Cómo se asigna el estado de cada segmento?</h3>
+<table class="severity-legend-table">
+    <colgroup>
+        <col style="width:22%">
+        <col style="width:78%">
+    </colgroup>
+    <thead>
+        <tr>
+            <th>Estado</th>
+            <th>Cuándo se asigna</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for row in context.severity_legend %}
+        <tr>
+            <td><span class="badge badge-{{ row.status | lower }}">{{ row.label }}</span></td>
+            <td>
+                <ul class="legend-rules">
+                {% for r in row.rules %}<li>{{ r }}</li>{% endfor %}
+                </ul>
+            </td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% endif %}
 
 <!-- Narrativa LLM de flota -->
 {% if fleet_narrative %}

@@ -52,11 +52,13 @@ class AnalysisContext:
     performance_week: date
     lag_semanas: int
     segments: list[SegmentMetrics]
+    # primary_target es requerido (sin default) — debe resolverse explícitamente
+    # desde MetaModelRegistry.primary_target_variable. Ver report/builder.py.
+    primary_target: str
     fleet_summary: dict[str, Any] = field(default_factory=dict)
     total_submodels: int = 11  # total de sub-scorecards del modelo (para portada)
     performance_coverage: list[dict] = field(default_factory=list)   # [{target, lag, cutoff_date}]
     performance_weeks: dict[str, date] = field(default_factory=dict)  # {target_name: cutoff_date}
-    primary_target: str = "b_malo8_13"   # target usado para columnas resumen de la flota
     latest_data_week: date | None = None  # ultima semana con datos en FACT_DISTRIBUTIONS
     data_lag_weeks: int | None = None     # semanas de desfase vs calendario actual
 

@@ -1,0 +1,12 @@
+﻿Segmento,Descripción Larga,Descripción Corta
+1,Clientes sin huellas de vinculación y sin experiencia crediticia ,No Vinculados No HIT
+2,Clientes sin huellas de vinculación y con experiencia crediticia menor a 6 meses ,No Vinculados Thin File
+3,Clientes sin huellas de vinculación y con experiencia crediticia mayor a 6 meses ,No Vinculados Big File
+4,Clientes vinculados con huella de Asalariado ,Vinculados Asalariados
+5,Clientes vinculados con huella en Captación y/o App Baz con experiencia crediticia ,Vinculados Capta + Digital Hit
+6,Clientes vinculados con huella en Captación y/o App Baz sin experiencia crediticia ,Vinculados Capta + Digital No Hit
+7,Clientes vinculados con huella de Divisas con experiencia crediticia ,Vinculados Divisas
+8,Clientes vinculados con huella de Remesas y experiencia crediticia ,Vinculados Remesas Hit
+9,Clientes vinculados con huella de Remesas sin experiencia crediticia ,Vinculados Remesas No Hit
+10,Clientes vinculados con huella de Medios de Pago y/o Beneficiarios de Programas Sociales y/o SuperAPP y/o Captación reciente con experiencia crediticia ,Vinculados Negocios de Comisión Hit
+11,Clientes vinculados con huella de Medios de Pago y/o Beneficiarios de Programas Sociales y/o SuperAPP y/o Captación reciente sin experiencia crediticia ,Vinculados Negocios de Comisión No Hit

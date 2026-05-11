@@ -1,0 +1,79 @@
+﻿Variable,Fuente,Descripción Corta,Descripción Larga
+cp_mean_ti_4_6_rez,Códigos Postales,Promedio ever4@6 por CP 12 meses,Promedio trimestral de mora Ever4@6 de primer pedido en el código postal en un periodo de 12 meses con 3 meses de maduración
+cp_mean_ti_8_13_rez,Códigos Postales,Promedio ever8@13 por CP 12 meses,Promedio trimestral de mora Ever8@13 de primer pedido en el código postal en un periodo de 12 meses con 3 meses de maduración
+edad,Solicitud,Edad,Edad
+edo_mean_ti_8_13_rez,Códigos Postales,Promedio ever8@13 por Estado 12 meses,Promedio trimestral de mora Ever8@13 de primer pedido en el estado geográfico en un periodo de 12 meses con 3 meses de maduración
+fisexo,Solicitud,Género,Género
+ctas_pago_min_cerradas,CDC,Número de cuentas externas cerradas,Número de cuentas cerradas (sólo aquellas con frecuencia de pago mensual)
+edo_median_ti_8_13_rez,Códigos Postales,Mediana ever8@13 por Estado 12 meses,Mediana trimestral de mora Ever8@13 de primer pedido en el estado geográfico en un periodo de 12 meses con 3 meses de maduración
+icv,CDC,Saldo vencido entre límite de crédito,Índice de Cartera Vencida ( suma de los saldos vencidos / suma de los límites de crédito )
+porc_f_cons_cdc_12m,CDC,% consultas de crédito pago fijo entre total consultas,Porcentaje de consultas de creditos de pago fijo sobre el total de consultas en los últimos 12 meses
+utilizacion,CDC,% Saldo actual respecto al límite de crédito,% Saldo actual respecto al límite de crédito
+ko1_ant,CDC,Bandera de prevención,"Indicadora histórica de marcas de prevención (FD=fraude, RI=Robo de identidad, UP=Quebranto y SG=Demanda)"
+ko3sv,CDC,Saldo vencido de cuentas en prevención,"Saldo total vencido de cuentas activas reportadas con marcas de prevención en una ventana de 12 meses(CV, NV = Cuentas Vendidas , IM= Cuenta comunal en mora, PC = Cuenta en Cobranza, VR = Cuenta donada por impago, FR = Cuentas proceso judicial, IS = Crédito comunal subsidiado, RN, RV= cuenta reestructurada, PS=  Cuenta con Convenio , RI = Robo de Identidad , UP = Quebranto)"
+max_mop_52s,CDC,MOP máximo ultimas 52 semanas,El máximo de atrasos acumulados transformados en pagos semanales de sus cuentas en las últimas 52 semanas
+maxantcard,CDC,Máxima antigüedad de cuentas revolventes,Máxima antigüedad de su cuentas revolventes
+min_sem_ultcomp,CDC,Semanas desde última compra,Número de semanas desde la última compra hasta la fecha de consulta 
+sum_abiertas_26s,CDC,Cuentas abiertas antes de 26 semanas,Total de cuentas que tienen menos o igual a 26 semanas desde su apertura a la fecha de consulta (abiertas o cerradas)
+tpf_cons_cdc_12m,CDC,Consultas sobre créditos de pago fijo,Número de consultas sobre créditos de pago fijo en los últimos 12 meses
+util_targethold,CDC,% uso en cuentas revolventes,% saldo actual respecto al límite de crédito de cuentas revolventes
+avg_mto_conveniencia,Cloudera,Transacción promedio en tiendas de conveniencia,Monto promedio de transacciones realizadas en giros de tiendas de conveniencia
+mto_dep_nomina_n6,Cloudera,Dispersión promedio de nómina en últimos 6 meses,Monto promedio de dispersión de nómina en 6 meses
+porc_oot_cons_cdc_12m,CDC,% Consultas off us entre total de consultas,Porcentaje de consultas realizadas por otras instituciones del total de consultas de los últimos 12 meses
+sld_prom_mensual_n6,Cloudera,Saldo promedio mensual en captación últimos 6 meses,Saldo promedio mensual en cuentas de captación en los últimos 6 meses
+std_num_ret_cliente_6m,Cloudera,Desviación estándar del número de retiros en últimos 6 meses,Desviación estándar del número de retiros que ha realizado el cliente con sus cuentas a la vista últimos 6 meses
+num_prom_dif_ses,Cloudera,Duración promedio de sesiones en app BAZ últimos 3 meses,Promedio de tiempo transcurrido entre sesiónes en APP BAZ (últimos 3 meses)
+avg_num_canal_cajero_6,Cloudera,Transacciones en cajero promedio en últimos 6 meses,Promedio de transacciones en cajero en los últimos seis meses
+prom_txn_compra_12m,Cloudera,Monto en compras promedio en últimos 12 meses,Promedio de monto de transacciones de compras en los últimos 12 meses
+mto_dispo_atm_3m,Cloudera,Monto dispuesto en cajeros últimos 3 meses,Monto total dispuesto en cajeros automáticos últimos 3 meses
+avg_mto_internet,Cloudera,Monto transaccionado en internet,Monto promedio transaccionado en internet
+edo_median_ti_4_6_rez,Códigos Postales,Mediana trimestral de mora Ever4@6 por Estado,Mediana trimestral de mora Ever4@6 de primer pedido en el estado geográfico en un periodo de 12 meses con 3 meses de maduración
+min_sld_tot_prod_cap_6m,Cloudera,Saldo mínimo en cuentas de captación últimos 6 meses,Saldo mínimo total en cuentas de captación en un periodo de 6 meses
+sld_tot_prod_cap_3,Cloudera,Saldo total en cuentas de captación últimos 3 meses,Saldo total en cuentas de captación en los últimos 3 meses
+ant_cap,Cloudera,Antigüedad con cuentas de captación,Antigüedad con cuentas de captación
+edo_mean_conteos_rez,Códigos Postales,Promedio trimestral de surtimientos por Estado,Promedio trimestral de surtimientos de primer pedido en el estado geográfico del trimestre más reciente con 3 meses de maduración
+ind_cuenta_capta,Cloudera,Indicador de cuentas captación,Bandera indicadora de cuentas de captación
+num_conveniencia,Cloudera,Número de transacciones en tiendas de conveniencia,Número de transacciones realizadas en giros de tiendas de conveniencia
+sld_vista,Cloudera,Saldo en cuentas de captación,Saldo a la vista en cuentas de captación
+mean_semvida_card,CDC,Duración promedio de cuentas,Promedio de la diferencia en semanas de las fecha de apertura y la fecha de consulta (abierta) o fechas de cierre (cerrada) de sus cuentas de Tarjetas
+monto_venta_pesos,Cloudera,Monto de venta divisas,Monto de venta divisas
+maxantinstalm,CDC,Máxima antigüedad de su cuentas,Máxima antigüedad de su cuentas Installment
+monto_u12meses,Cloudera,Monto recibido de remesas últimos 12 meses,Monto recibido de remesas en los últimos 12 meses
+porc_baz_cons_cdc_12m,CDC,Porcentaje de consultas BAZ entre total últimos 12 meses,Porcentaje de consultas realizadas por BAZ del total de consultas en los últimos 12 meses
+porc_oot_cons_cdc_3m,CDC,Porcentaje de consultas off us entre el total últimos 3 meses,Porcentaje de consultas realizadas por otras instituciones del total de consultas de los últimos 3 meses
+porc_tc_cons_cdc_12m,CDC,Porcentaje de consultas para tarjeta de crédito entre el total últimos 12 meses,Porcentaje de consultas para tarjeta de crédito del total de consultas en los últimos 12 meses
+cp_conteos_rez,Códigos Postales,Número de surtimientos por código postal,Número de surtimientos de primer pedido en el código postal del trimestre más reciente con 3 meses de maduración
+monto_eeuu_u12meses,Cloudera,Monto recibido de remesas en los últimos 12 desde Estados Unidos,Monto recibido de remesas en los últimos 12 meses con pais origen Estados Unidos
+tpf_cons_cdc_6m,CDC,Consultas sobre créditos de pago fijo en últimos 6 meses,Número de consultas sobre créditos de pago fijo en los últimos 6 meses
+cp_mean_malos_8_13_rez,Códigos Postales,Surtimientos de primer pedido con mora Ever8@13 por Código Postal,Promedio trimestral de surtimientos de primer pedido con mora Ever8@13 en el código postal del trimestre más reciente con 3 meses de maduración
+cp_ti_8_13_rez,Códigos Postales,Mora Ever8@13 por código postal,Mora Ever8@13 de primer pedido en el código postal del trimestre más reciente con 3 meses de maduración
+pcttot_vida_13s,CDC,% de cuentas del cilente con al menos 13 semanas,% de cuentas que tienen menos o igual a 13 semanas de vida (abiertas o cerradas)
+coc_tot_cons_cdc_3m_12m,CDC,% de consultas en últimos 3 meses sobre consultas en últimos 12 meses,Porcentaje de consultas realizadas en los últimos 3 meses sobre el total de consultas realizadas en los últimos 12 meses
+max_sem_ultpag_activas,CDC,Semanas entre la fecha de último pago y la fecha consulta de cuentas activas,Máximo de la diferencia en semanas de la fecha de último pago y la fecha consulta de sus cuentas activas
+dias_ult_disp,Cloudera,Días transcurridos desde última disposición,Días transcurridos desde su última disposición
+disp_mensual,Cloudera,Monto de dispersión mensual,Monto de dispersión mensual
+nu_fam2,Cloudera,Vinculación del cliente con BAZ,Número de familias de Vinculación del cliente con BAZ
+num_dep_nomina_n3,Cloudera,Depositos en cuentas de nómina en 3meses,Número de depositos en cuentas de nómina en 3meses
+num_no_monetarias,Cloudera,Número de transacciones no monetarias,Número de transacciones no monetarias
+num_tienda_desc,Cloudera,Transacciones realizadas en tiendas de descuentos,Número de trransacciones realizadas en el giro de tiendas de descuentos
+prom_txn_dep_interes_12m,Cloudera,Depositos con intereses en los últimos 12 meses,Promedio de depositos de intereses en los últimos 12 meses
+sld_fin_mes_n6,Cloudera,Saldo a fin de mes en captación últimos 6 meses,Saldo a fin de mes en cuentas de captación en los últimos 6 meses
+ant_dig,Cloudera,Antigüedad con la App BAZ,Antigüedad con la App BAZ
+avg_num_semanas_act,Cloudera,Semanas activas en cuentas de captación,Promedio de semanas activas en cuentas de captación
+edo_median_conteos_rez,Códigos Postales,Mediana trimestral de surtimientos por código postal,Mediana trimestral de surtimientos de primer pedido en el código postal del trimestre más reciente con 3 meses de maduración
+numero_prestamos_pers,CDC,Prestamos personales totales históricos,Número de prestamos personales totales históricos
+avg_num_guardadito_6,Cloudera,Cuentas de guardadito en 6 meses,Promedio de cuentas de guardadito en 6 meses
+ind_sin_cuenta,Cloudera,Indicadora de cliente sin nómina,Bandera indicadora que el cliente no tiene cuenta de nomina
+monto_compra_dolares,Cloudera,Monto de compra de dólares último mes,Monto de compra de dólares último mes
+sld_prom_mensual,Cloudera,Saldo promedio mensual en cuentas de captación,Saldo promedio mensual en cuentas de captación
+mto_dep_interes_12m,Cloudera,Monto depositado por intereses en últimos 12 meses,Monto depositado por intereses en los últimos 12 meses
+oot_cons_cdc_3m,CDC,Consultas off us en los últimos 3 meses,Consultas realizadas por otras instituciones en los últimos 3 meses
+monto_pago,Cloudera,Monto de remesas en el ultimo mes,Monto de remesas en el ultimo mes
+porc_f_cons_cdc_3m,CDC,% de consultas de creditos de pago fijo sobre el total en últimos 3 meses,Porcentaje de consultas de creditos de pago fijo sobre el total de consultas en los últimos 3 meses
+sld_fin_mes_n3,Cloudera,Saldo a fin de mes en cuentas de captación últimos 3 meses,Saldo a fin de mes en cuentas de captación en los últimos 3 meses
+sld_prom_mes,Cloudera,Saldo promedio mensual en cuentas de captación,Saldo promedio mensual en cuentas de captación
+txn_compra,Cloudera,Transacciones en compras con tarjeta física,Transacciones en compras con tarjeta física
+avg_sld_guardadito_6,Cloudera,Saldo promedio en cuentas guardadito en los últimos 6 meses,Saldo promedio en cuentas de guardadito en los últimos 6 meses
+oot_cons_cdc_12m,CDC,Consultas off us últimos 12 meses,Consultas realizadas por otras instituciones en los últimos 12 meses
+sld_prom_mensual_n3,Cloudera,Saldo promedio mensual en cuentas de captación últimos 3 meses,Saldo promedio mensual en cuentas de captación en los últimos 3 meses
+,,,

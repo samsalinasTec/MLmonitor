@@ -1,21 +1,23 @@
 """
 Loader de thresholds per-segmento desde CSV.
 
-Fuente: `data/inputs/raw_tables/tresholds_monitoreo.csv` (entregado por el equipo
-de crédito). Se aplican estas reglas:
+Fuente: el CSV `thresholds.csv` dentro del directorio del modelo (
+`data/inputs/model_configs/<model_id>/thresholds.csv`). Antes vivía en
+`data/inputs/raw_tables/tresholds_monitoreo.csv` (con typo); migrado a
+nombre canónico al externalizar la config (ver ADR §8.2.30).
 
+Reglas que aplica este módulo:
 - `direction` se determina con la regla canónica en código (ignorando el campo
   del CSV, que viene con errores humanos): `psi`/`null_rate`/`ordering_violations`
   son `higher_worse`; `gini`/`ks` son `lower_worse`.
-- Variables intermedias (en `EXTRA_SERC_VARIABLES` pero fuera del scorecard)
+- Variables intermedias (en `config.extra_serc_variables`, fuera del scorecard)
   se ignoran: no se monitorean.
 - Si una métrica esperada no está en el CSV → se inserta con default.
 - Si el CSV trae una métrica/variable no esperada → se ignora.
 
-Reusable desde `bootstrap.py` (DBs nuevas) y desde la migración one-shot
-(`scripts/migrate_thresholds_2026_04_27.py`).
-
-Ver ADR §8.2.23.
+Las funciones reciben `config: ModelConfig` para resolver targets, variables
+canónicas por segmento, y el mapeo SERC→canónico — antes esto se importaba
+como módulo-level desde `bootstrap` y `variable_mapping`. Ver ADR §8.2.30.
 """
 
 from __future__ import annotations
@@ -23,12 +25,7 @@ from __future__ import annotations
 import csv
 from pathlib import Path
 
-from mlmonitor.data.bootstrap import TARGET_VARIABLES
-from mlmonitor.data.variable_mapping import (
-    CANONICAL_VARIABLES,
-    EXTRA_SERC_VARIABLES,
-    serc_to_canonical,
-)
+from mlmonitor.data.model_config import ModelConfig
 
 DEFAULT_PSI: tuple[float, float] = (0.10, 0.20)
 DEFAULT_NULL_RATE: tuple[float, float] = (0.03, 0.10)
@@ -47,8 +44,6 @@ CANONICAL_DIRECTION: dict[str, str] = {
 
 _PERF_PREFIXES = ("ordering_violations_", "gini_", "ks_")
 _BASIC_METRICS = {"psi", "null_rate"}
-_EXTRA_SET = {v.upper() for v in EXTRA_SERC_VARIABLES}
-_TARGET_NAMES = set(TARGET_VARIABLES.keys())
 
 
 def _direction_for(metric_name: str) -> str:
@@ -60,7 +55,7 @@ def _direction_for(metric_name: str) -> str:
     raise ValueError(f"No canonical direction for metric '{metric_name}'")
 
 
-def _normalize_metric_name(raw_metric: str) -> str | None:
+def _normalize_metric_name(raw_metric: str, config: ModelConfig) -> str | None:
     """
     Convierte el `metric_name` del CSV a su forma canónica.
 
@@ -73,23 +68,27 @@ def _normalize_metric_name(raw_metric: str) -> str | None:
     name = raw_metric.strip()
     if name in _BASIC_METRICS:
         return name
+    extra_set = {v.upper() for v in config.extra_serc_variables}
+    target_names = set(config.target_names)
     for prefix in _PERF_PREFIXES:
         if name.startswith(prefix):
             subject = name[len(prefix):]
-            if subject in _TARGET_NAMES:
+            if subject in target_names:
                 return name
             if subject.upper() == "INTERCEPTO":
                 return None
-            canonical = serc_to_canonical(subject)
+            canonical = config.serc_to_canonical(subject)
             if canonical:
                 return f"{prefix}{canonical}"
-            if subject.upper() in _EXTRA_SET:
+            if subject.upper() in extra_set:
                 return None
             return None
     return None
 
 
-def parse_thresholds_csv(csv_path: Path) -> dict[tuple[str, str], tuple[float, float]]:
+def parse_thresholds_csv(
+    csv_path: Path, config: ModelConfig,
+) -> dict[tuple[str, str], tuple[float, float]]:
     """
     Lee el CSV y retorna un lookup `(segment_id, metric_name) -> (warning, critical)`.
 
@@ -107,7 +106,7 @@ def parse_thresholds_csv(csv_path: Path) -> dict[tuple[str, str], tuple[float, f
             crit_raw = (row.get("critical_treshold") or "").strip()
             if not metric_raw or not seg_raw or not warn_raw or not crit_raw:
                 continue
-            metric_name = _normalize_metric_name(metric_raw)
+            metric_name = _normalize_metric_name(metric_raw, config)
             if metric_name is None:
                 continue
             if not seg_raw.startswith("bb_"):
@@ -122,9 +121,15 @@ def parse_thresholds_csv(csv_path: Path) -> dict[tuple[str, str], tuple[float, f
     return lookup
 
 
-def expected_metrics_for_segment(segment_num: int) -> list[tuple[str, tuple[float, float]]]:
+def expected_metrics_for_segment(
+    segment_id: str, config: ModelConfig,
+) -> list[tuple[str, tuple[float, float]]]:
     """
     Lista las métricas que se esperan persistir para un segmento, con sus defaults.
+
+    Args:
+        segment_id: ID del segmento ("s1", "s2", ...).
+        config: configuración del modelo.
 
     Returns: [(metric_name, (default_warning, default_critical)), ...]
     """
@@ -132,11 +137,12 @@ def expected_metrics_for_segment(segment_num: int) -> list[tuple[str, tuple[floa
         ("psi", DEFAULT_PSI),
         ("null_rate", DEFAULT_NULL_RATE),
     ]
-    for tname in TARGET_VARIABLES:
-        out.append((f"gini_{tname}", DEFAULT_GINI_TARGET))
-        out.append((f"ks_{tname}", DEFAULT_KS_TARGET))
-        out.append((f"ordering_violations_{tname}", DEFAULT_ORD_TARGET))
-    for canonical_var in CANONICAL_VARIABLES.get(segment_num, []):
+    for target in config.targets:
+        out.append((f"gini_{target.name}", DEFAULT_GINI_TARGET))
+        out.append((f"ks_{target.name}", DEFAULT_KS_TARGET))
+        out.append((f"ordering_violations_{target.name}", DEFAULT_ORD_TARGET))
+    seg = config.segment_by_id(segment_id)
+    for canonical_var in seg.variables:
         out.append((f"gini_{canonical_var}", DEFAULT_GINI_VAR))
     return out
 
@@ -145,6 +151,7 @@ def compute_thresholds_for_segment(
     segment_id: str,
     registry_id: int,
     csv_lookup: dict[tuple[str, str], tuple[float, float]],
+    config: ModelConfig,
 ) -> list[dict]:
     """
     Construye los kwargs para crear `MetaMetricThresholds` para un segmento.
@@ -152,9 +159,8 @@ def compute_thresholds_for_segment(
     Cada dict puede pasarse directo a `MetaMetricThresholds(**kwargs)` (faltan
     `valid_from` y `valid_to`, que los pone el caller).
     """
-    segment_num = int(segment_id.removeprefix("s"))
     rows: list[dict] = []
-    for metric_name, default in expected_metrics_for_segment(segment_num):
+    for metric_name, default in expected_metrics_for_segment(segment_id, config):
         warning, critical = csv_lookup.get((segment_id, metric_name), default)
         rows.append({
             "metric_name": metric_name,

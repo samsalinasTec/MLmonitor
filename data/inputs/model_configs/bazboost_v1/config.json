@@ -1,0 +1,241 @@
+{
+  "model_id": "BAZBOOST_V1",
+  "model_name": "BazBoost Credito",
+  "model_type": "logistic_regression_scorecard",
+  "owner_team": "analytics credito",
+  "target_definition": "Probabilidad de incumplimiento",
+  "score_min": 0,
+  "score_max": 1000,
+  "primary_target": "b_malo14_26",
+  "missing_sentinel": -100,
+  "num_bins_numeric": 10,
+  "score_bins": [
+    [0, 100],
+    [100, 200],
+    [200, 300],
+    [300, 400],
+    [400, 500],
+    [500, 600],
+    [600, 700],
+    [700, 800],
+    [800, 900],
+    [900, 1000]
+  ],
+  "categorical_variables": ["fisexo"],
+  "targets": [
+    {"name": "b_malo4_6",   "lag_semanas": 6,  "ascending_order": false},
+    {"name": "b_malo8_13",  "lag_semanas": 13, "ascending_order": false},
+    {"name": "b_malo14_26", "lag_semanas": 26, "ascending_order": false}
+  ],
+  "segments": [
+    {
+      "segment_id": "s1",
+      "group_name": "NO FILES",
+      "feature_count": 5,
+      "variables": [
+        "cp_mean_ti_8_13_rez",
+        "cp_mean_ti_4_6_rez",
+        "edo_mean_ti_8_13_rez",
+        "edad",
+        "fisexo"
+      ]
+    },
+    {
+      "segment_id": "s2",
+      "group_name": "THIN FILES",
+      "feature_count": 7,
+      "variables": [
+        "cp_mean_ti_8_13_rez",
+        "porc_f_cons_cdc_12m",
+        "utilizacion",
+        "edo_median_ti_8_13_rez",
+        "icv",
+        "edad",
+        "ctas_pago_min_cerradas"
+      ]
+    },
+    {
+      "segment_id": "s3",
+      "group_name": "BIG FILES",
+      "feature_count": 10,
+      "variables": [
+        "ko3sv",
+        "max_mop_52s",
+        "util_targethold",
+        "tpf_cons_cdc_12m",
+        "ko1_ant",
+        "min_sem_ultcomp",
+        "maxantcard",
+        "ctas_pago_min_cerradas",
+        "sum_abiertas_26s",
+        "edad"
+      ]
+    },
+    {
+      "segment_id": "s4",
+      "group_name": "THIN FILES",
+      "feature_count": 11,
+      "variables": [
+        "num_prom_dif_ses",
+        "avg_mto_conveniencia",
+        "std_num_ret_cliente_6m",
+        "avg_num_canal_cajero_6",
+        "fisexo",
+        "prom_txn_compra_12m",
+        "mto_dep_nomina_n6",
+        "sld_prom_mensual_n6",
+        "mto_dispo_atm_3m",
+        "edad",
+        "porc_oot_cons_cdc_12m"
+      ]
+    },
+    {
+      "segment_id": "s5",
+      "group_name": "BIG FILES",
+      "feature_count": 17,
+      "variables": [
+        "maxantcard",
+        "min_sld_tot_prod_cap_6m",
+        "num_prom_dif_ses",
+        "edo_median_ti_4_6_rez",
+        "std_num_ret_cliente_6m",
+        "ko3sv",
+        "min_sem_ultcomp",
+        "prom_txn_compra_12m",
+        "sld_prom_mensual_n6",
+        "edad",
+        "ant_cap",
+        "tpf_cons_cdc_12m",
+        "cp_mean_ti_8_13_rez",
+        "ctas_pago_min_cerradas",
+        "avg_mto_internet",
+        "util_targethold",
+        "sld_tot_prod_cap_3"
+      ]
+    },
+    {
+      "segment_id": "s6",
+      "group_name": "NO FILES",
+      "feature_count": 10,
+      "variables": [
+        "edad",
+        "num_prom_dif_ses",
+        "ant_cap",
+        "edo_mean_conteos_rez",
+        "ind_cuenta_capta",
+        "min_sld_tot_prod_cap_6m",
+        "sld_vista",
+        "num_conveniencia",
+        "cp_mean_ti_8_13_rez",
+        "avg_mto_internet"
+      ]
+    },
+    {
+      "segment_id": "s7",
+      "group_name": "BIG FILES",
+      "feature_count": 9,
+      "variables": [
+        "ko3sv",
+        "edad",
+        "ko1_ant",
+        "min_sem_ultcomp",
+        "cp_mean_ti_8_13_rez",
+        "ctas_pago_min_cerradas",
+        "tpf_cons_cdc_12m",
+        "mean_semvida_card",
+        "monto_venta_pesos"
+      ]
+    },
+    {
+      "segment_id": "s8",
+      "group_name": "THIN FILES",
+      "feature_count": 7,
+      "variables": [
+        "porc_oot_cons_cdc_12m",
+        "maxantinstalm",
+        "edad",
+        "porc_baz_cons_cdc_12m",
+        "monto_u12meses",
+        "porc_oot_cons_cdc_3m",
+        "porc_tc_cons_cdc_12m"
+      ]
+    },
+    {
+      "segment_id": "s9",
+      "group_name": "NO FILES",
+      "feature_count": 7,
+      "variables": [
+        "ant_cap",
+        "fisexo",
+        "cp_conteos_rez",
+        "cp_mean_ti_8_13_rez",
+        "edad",
+        "edo_mean_ti_8_13_rez",
+        "monto_eeuu_u12meses"
+      ]
+    },
+    {
+      "segment_id": "s10",
+      "group_name": "BIG FILES",
+      "feature_count": 7,
+      "variables": [
+        "maxantcard",
+        "ant_cap",
+        "tpf_cons_cdc_6m",
+        "ko3sv",
+        "utilizacion",
+        "edad",
+        "ctas_pago_min_cerradas"
+      ]
+    },
+    {
+      "segment_id": "s11",
+      "group_name": "NO FILES",
+      "feature_count": 5,
+      "variables": [
+        "cp_mean_ti_8_13_rez",
+        "cp_mean_malos_8_13_rez",
+        "edo_median_ti_8_13_rez",
+        "edad",
+        "fisexo"
+      ]
+    }
+  ],
+  "name_mapping": {
+    "SEXO": "fisexo",
+    "PORCFCONSTCDC12M": "porc_f_cons_cdc_12m",
+    "PORCFCONSTCDC3M": "porc_f_cons_cdc_3m"
+  },
+  "extra_serc_variables": [
+    "ANTDIG",
+    "AVGNUMGUARDADITO6",
+    "AVGNUMSEMANASACT",
+    "AVGSLDGUARDADITO6",
+    "COCTOTCONSCDC3M12M",
+    "CPTI813REZ",
+    "DIASULTDISP",
+    "DISPMENSUAL",
+    "EDOMEDIANCONTEOSREZ",
+    "ICVPC",
+    "INDSINCUENTA",
+    "MAXSEMULTPAGAACTIVAS",
+    "MONTOCOMPRADOLARES",
+    "MONTOPAGO",
+    "MTODEPINTERES12M",
+    "NUFAM2",
+    "NUMDEPNOMINAN3",
+    "NUMNOMONETARIAS",
+    "NUMPRESTAMOSPERS",
+    "NUMTIENDADESC",
+    "OOTCONSCDC12M",
+    "OOTCONSCDC3M",
+    "PCTTOTVIDA13S",
+    "PROMTXNDEPINTERES12M",
+    "SLDFINMESN3",
+    "SLDFINMESN6",
+    "SLDPROMMENSUAL",
+    "SLDPROMMENSUALN3",
+    "SLDPROMMES",
+    "TXNCOMPRA"
+  ]
+}

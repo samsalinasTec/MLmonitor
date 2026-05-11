@@ -9,6 +9,12 @@
   "primary_target": "b_malo14_26",
   "missing_sentinel": -100,
   "num_bins_numeric": 10,
+  "psi_window_weeks": 4,
+  "decile_window_weeks": 4,
+  "decile_min_obs": 100,
+  "n_deciles": 10,
+  "baseline_year": 2026,
+  "baseline_n_weeks": 4,
   "score_bins": [
     [0, 100],
     [100, 200],

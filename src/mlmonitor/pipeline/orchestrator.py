@@ -15,6 +15,7 @@ from sqlalchemy import func
 from sqlalchemy.engine import Engine
 
 from mlmonitor.analyst.base import AnalysisContext, AnalysisResult
+from mlmonitor.data.model_config import ModelConfig
 from mlmonitor.db.models import Base, FactDistributions
 from mlmonitor.db.session import get_session
 from mlmonitor.email.sender import SESEmailSender
@@ -88,9 +89,18 @@ class PipelineOrchestrator:
         # ----------------------------------------------------------------
         # Step 1: Calcular métricas
         # ----------------------------------------------------------------
+        # Cargar ModelConfig para tener las ventanas y umbrales declarados
+        # del modelo (ver A4). Si el config no existe, MetricsCalculator
+        # cae a defaults de módulo — útil para escenarios de test ad-hoc.
+        try:
+            config = ModelConfig.for_model(model_id)
+        except FileNotFoundError:
+            config = None
+            print(f"[pipeline] WARN: sin config.json para {model_id}; usando defaults de módulo")
+
         print("\n[Step 1] Calculando métricas...")
         with get_session(self.engine) as session:
-            calculator = MetricsCalculator(session)
+            calculator = MetricsCalculator(session, config=config)
             metrics_rows = calculator.run_for_model(model_id, calculation_date)
 
         results["steps"]["metrics"] = {

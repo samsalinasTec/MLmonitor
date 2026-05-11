@@ -94,6 +94,8 @@ def get_decile_data_for_segment(
     primary_target_lag: int,
     all_targets: list[MetaVariables],
     min_obs: int = DECILE_MIN_OBS,
+    n_deciles: int = N_DECILES,
+    window_weeks: int = DECILE_WINDOW_WEEKS,
 ) -> dict:
     """Carga FACT_PERFORMANCE_INDIVIDUAL y arma datos para las dos gráficas.
 
@@ -121,7 +123,7 @@ def get_decile_data_for_segment(
         }
     """
     primary_cohort = calculation_week - timedelta(weeks=primary_target_lag)
-    primary_window = _window_weeks(primary_cohort)
+    primary_window = _window_weeks(primary_cohort, window_weeks)
 
     eligible_targets = [
         t for t in all_targets
@@ -164,7 +166,7 @@ def get_decile_data_for_segment(
         ref_df = flags_by_target[ref_target].dropna(subset=["fnpuntaje"]).reset_index(drop=True)
         if len(ref_df) >= min_obs:
             ref_df["bucket"] = pd.qcut(
-                ref_df["fnpuntaje"], q=N_DECILES, labels=False, duplicates="drop",
+                ref_df["fnpuntaje"], q=n_deciles, labels=False, duplicates="drop",
             )
             base = (
                 ref_df.groupby("bucket", observed=True)
@@ -203,7 +205,7 @@ def get_decile_data_for_segment(
     per_target: dict[str, dict] = {}
     for t in all_targets:
         cohort = calculation_week - timedelta(weeks=t.lag_semanas or 0)
-        window = _window_weeks(cohort)
+        window = _window_weeks(cohort, window_weeks)
         rows = (
             session.query(FactPerformanceIndividual)
             .filter(
@@ -236,7 +238,7 @@ def get_decile_data_for_segment(
             }
             continue
 
-        table = compute_decile_table(df["score"], df["flag"])
+        table = compute_decile_table(df["score"], df["flag"], n_deciles=n_deciles)
         per_target[t.variable_name] = {
             "cohort_week": cohort,
             "cohort_window_start": window[-1],

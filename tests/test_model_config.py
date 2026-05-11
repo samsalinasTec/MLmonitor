@@ -249,3 +249,54 @@ def test_serc_to_canonical_real_bazboost_v1():
     assert config.serc_to_canonical("PORCFCONSTCDC12M") == "porc_f_cons_cdc_12m"
     assert config.serc_to_canonical("INTERCEPTO") is None
     assert config.serc_to_canonical("VARIABLE_INEXISTENTE") is None
+
+
+# ---------------------------------------------------------------------------
+# Iteración 2 A4: ventanas y umbrales de cómputo en ModelConfig
+# ---------------------------------------------------------------------------
+
+
+def test_runtime_params_default_when_absent_in_json(minimal_config_path: Path):
+    """Si el JSON no declara los campos A4, caen a defaults conservadores.
+
+    Garantiza backwards-compat: configs viejos (pre-Iter-2) siguen cargando.
+    """
+    config = ModelConfig.from_json_file(minimal_config_path)
+    assert config.psi_window_weeks == 4
+    assert config.decile_window_weeks == 4
+    assert config.decile_min_obs == 100
+    assert config.n_deciles == 10
+    assert config.baseline_year == 2026
+    assert config.baseline_n_weeks == 4
+
+
+def test_runtime_params_override_from_json(tmp_path: Path, minimal_config_dict: dict):
+    """Si el JSON declara los campos A4, ganan sobre los defaults."""
+    minimal_config_dict["psi_window_weeks"] = 8
+    minimal_config_dict["decile_window_weeks"] = 6
+    minimal_config_dict["decile_min_obs"] = 250
+    minimal_config_dict["n_deciles"] = 20
+    minimal_config_dict["baseline_year"] = 2025
+    minimal_config_dict["baseline_n_weeks"] = 12
+
+    cfg_path = tmp_path / "config.json"
+    cfg_path.write_text(json.dumps(minimal_config_dict), encoding="utf-8")
+
+    config = ModelConfig.from_json_file(cfg_path)
+    assert config.psi_window_weeks == 8
+    assert config.decile_window_weeks == 6
+    assert config.decile_min_obs == 250
+    assert config.n_deciles == 20
+    assert config.baseline_year == 2025
+    assert config.baseline_n_weeks == 12
+
+
+def test_runtime_params_real_bazboost_v1():
+    """El config real declara los valores A4 explícitos (Iteración 2)."""
+    config = ModelConfig.for_model("BAZBOOST_V1")
+    assert config.psi_window_weeks == 4
+    assert config.decile_window_weeks == 4
+    assert config.decile_min_obs == 100
+    assert config.n_deciles == 10
+    assert config.baseline_year == 2026
+    assert config.baseline_n_weeks == 4

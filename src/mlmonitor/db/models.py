@@ -130,6 +130,36 @@ class MetaMetricThresholds(Base):
     valid_to = Column(Date, nullable=True)
 
 
+class MetaAggregationRules(Base):
+    """Reglas de agregación de severidad (`status_*_count_*`). SCD2.
+
+    Antes de Iteración 2 estas constantes vivían en `config/settings.py` y
+    aplicaban a todos los modelos sin auditoría. Ahora cada regla es una
+    fila versionada: el cambio del 2026-05-05 (8→5, 1→3, 4→8) queda trazable.
+
+    `model_registry_id` NULL = regla global; rellena para overrides por modelo.
+    El resolver (`data/aggregation_rules.py`) usa precedencia
+    specific → global → default Python — mismo patrón que `AlertEvaluator.get_threshold`.
+    """
+
+    __tablename__ = "META_AGGREGATION_RULES"
+    __table_args__ = (
+        UniqueConstraint(
+            "model_registry_id", "rule_name", "valid_from",
+            name="uq_meta_aggregation_rules",
+        ),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    model_registry_id = Column(Integer, ForeignKey("META_MODEL_REGISTRY.id"), nullable=True, index=True)  # NULL = global
+    rule_name = Column(String(100), nullable=False)
+    rule_value = Column(Float, nullable=False)
+    description = Column(String(200), nullable=True)
+    valid_from = Column(Date, nullable=False)
+    valid_to = Column(Date, nullable=True)  # NULL = vigente
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+
 class MetaBaselineDistributions(Base):
     """Distribuciones de referencia del baseline de entrenamiento.
 

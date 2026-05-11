@@ -29,6 +29,7 @@ import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 
+from mlmonitor.data.aggregation_rules import seed_default_global_rules
 from mlmonitor.db.models import (
     Base,
     FactDistributions,
@@ -329,6 +330,11 @@ def populated_engine(engine):
         registry_map = _insert_registry(session)
         var_id_map = _insert_variables(session, registry_map)
         _insert_thresholds(session)
+        # Iteración 2 A3: las reglas de severidad ahora viven en
+        # META_AGGREGATION_RULES. El bootstrap real las siembra; el fixture
+        # las siembra aquí para que tests que vayan por ReportBuilder.build
+        # las encuentren en DB y no caigan al fallback Python.
+        seed_default_global_rules(session, valid_from=WEEK_0)
         _insert_baseline_distributions(session, registry_map, var_id_map)
         _insert_production_distributions(session, registry_map, var_id_map)
         _insert_performance_outcomes(session, registry_map, var_id_map)

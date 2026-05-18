@@ -6,6 +6,19 @@ Formato: encabezado por fecha ISO (`## YYYY-MM-DD`) + bullets cortos. Entradas m
 
 ---
 
+## 2026-05-17
+
+- **LLM con salida estructurada vía Bedrock tool_use** (motivado por el bleed del bloque ` ```json ``` ` dentro del recuadro "Análisis del Segmento" del PDF — la regex de `_parse_segment_response` caía al fallback `narrative = raw.strip()` cuando el LLM no respetaba al pie de la letra el marcador `**ANÁLISIS**`, y arrastraba el fence completo al recuadro).
+  - **Nueva dep:** `anthropic[bedrock]` (^0.102) en grupo `pipeline`. Se prefirió sobre seguir con `boto3.invoke_model` para alinear con el patrón ya validado en el repo `GenAIPdfsExperiments` (cliente `AnthropicBedrock` + `tools`/`tool_choice`).
+  - **Nuevo `src/mlmonitor/analyst/schemas.py`** con 3 modelos Pydantic: `RecommendedAction` (Literal `prioridad`), `SegmentAnalysis` (`analisis`, `acciones`), `FleetAnalysis` (`resumen_ejecutivo`, `segmentos_criticos`).
+  - **`bedrock_analyst.py` reescrito.** `_call_llm` → `_call_llm_structured(prompt, schema)` que usa `client.messages.create(tools=[{name, input_schema}], tool_choice={"type": "tool", "name": "emit_analysis"})`, extrae el bloque `tool_use` y valida con `schema.model_validate`. Borrado `_parse_segment_response` (regex muere). Si Pydantic falla → ValidationError + log; si no hay bloque tool_use → RuntimeError. Cero reintentos por decisión del usuario; el pipeline cae a sin-narrativa igual que con `--no-llm`.
+  - **`prompts.py`** ya no instruye `**ANÁLISIS**` ni bloque ` ```json ``` ` — la forma la fuerza el schema. Los prompts solo dicen QUÉ poner en cada campo.
+  - **`AnalysisResult` sin cambios** (mantiene `fleet_narrative: str`, `segment_narratives`, `recommended_actions`) → renderer y templates no se tocan. El recuadro "Análisis del Segmento" en `submodel_section.html` ahora recibe solo el campo `analisis` del schema y la tabla "Acciones Recomendadas" sigue consumiendo el mismo shape `[{prioridad, accion, detalle}, …]`. El campo `segmentos_criticos` del fleet hoy no se renderiza — queda disponible en `raw_responses["fleet"]` para cuando haya caso de uso (YAGNI hasta entonces).
+  - **Tests:** nuevo `tests/test_bedrock_analyst.py` (4 casos): tool_use válido → dict validado; payload inválido (`prioridad="URGENT"`) → ValidationError; respuesta sin tool_use → RuntimeError; `analyze_fleet` end-to-end con cliente fake (3 llamadas: 1 fleet + 2 segmentos) verifica shape de `AnalysisResult`. Suite completa: **162/162 passed** (158 previos + 4 nuevos).
+  - **Pendiente:** smoke real contra Bedrock con `poetry run python scripts/run_pipeline.py --date 2026-04-06 --no-email` (requiere credenciales AWS) para confirmar que el modelo Haiku 4.5 respeta el schema en producción y que el PDF resultante ya no muestra bleed.
+
+---
+
 ## 2026-05-11
 
 - **Iteración 2 — kickoff + cierre** (`feature/iter-2-config-aggregation`): scope A3 + A4 + D7 de `upgrades.md §L`. Plan en `~/.claude/plans/lee-los-docs-calude-md-memoized-cake.md`. Orden ejecutado: D7 → A4 → A3 (de menor a mayor riesgo). Suite final **158/158 passed** (+11 vs Iter 1) y pipeline E2E verde.

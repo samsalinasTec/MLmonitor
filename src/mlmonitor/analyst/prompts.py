@@ -2,18 +2,23 @@
 Templates Jinja2 para prompts del analista LLM.
 En español, dominio-específico de scoring de crédito.
 
+La forma de la salida la fuerza el schema Pydantic (`schemas.py`) vía
+tool_use de Bedrock — los prompts solo describen QUÉ poner en cada campo,
+no la estructura del JSON.
+
 Restricciones:
 - NO mencionar F1, precision, recall, AUC binario
 - SÍ usar Gini, KS, Tasa de Incumplimiento, Tasa de Cumplimiento
-- SIEMPRE mencionar el lag de 8 semanas al hablar de performance
-- Salida con prioridades: [CRÍTICO/ALTA/MEDIA/MONITOREO]
+- SIEMPRE mencionar el lag al hablar de performance
+- Prioridades válidas: CRÍTICO / ALTA / MEDIA / MONITOREO
 """
 
 from jinja2 import Environment, BaseLoader
 
 FLEET_SUMMARY_TEMPLATE = """\
 Eres un analista experto en modelos de scoring de crédito para cartera de México.
-Analiza el siguiente reporte de monitoreo de flota de scorecards y genera un resumen ejecutivo en español.
+Vas a generar un análisis estructurado en español para el siguiente reporte de
+monitoreo de flota de scorecards.
 
 ## MODELO
 - ID: {{ model_id }}
@@ -38,23 +43,24 @@ Analiza el siguiente reporte de monitoreo de flota de scorecards y genera un res
 {% endfor %}
 
 ## INSTRUCCIONES
-Genera un párrafo ejecutivo de 4-6 oraciones que:
-1. Describa el estado general de la flota
-2. Identifique los 2-3 segmentos más críticos y por qué
-3. Mencione la fecha de performance efectiva al hablar de Gini/KS (datos pre-etiquetados)
-4. Indique la tendencia general (estable, deteriorándose, mejorando)
+Genera el análisis llenando los campos del schema:
 
-IMPORTANTE:
-- NO menciones F1-score, precision, recall ni AUC binario
-- USA los términos: Gini, KS, PSI, Tasa de Incumplimiento (b_malo)
-- Escribe en español técnico para un equipo de analytics
+- `resumen_ejecutivo`: 4-6 oraciones que describan (1) el estado general de la
+  flota, (2) los 2-3 segmentos más críticos y por qué, (3) mencionando la fecha
+  de performance efectiva al hablar de Gini/KS, y (4) la tendencia general
+  (estable, deteriorándose, mejorando).
+- `segmentos_criticos`: lista con los IDs (s1..s11) de los 2-3 segmentos más
+  críticos. Lista vacía si la flota está sana.
 
-Responde ÚNICAMENTE con el párrafo ejecutivo, sin encabezados adicionales.
+REGLAS DE CONTENIDO:
+- NO menciones F1-score, precision, recall ni AUC binario.
+- USA los términos: Gini, KS, PSI, Tasa de Incumplimiento (b_malo).
+- Escribe en español técnico para un equipo de analytics.
 """
 
 SEGMENT_ANALYSIS_TEMPLATE = """\
 Eres un analista experto en modelos de scoring de crédito para cartera de México.
-Analiza el siguiente segmento y genera un análisis detallado en español.
+Vas a generar un análisis estructurado del siguiente segmento en español.
 
 ## CONTEXTO GENERAL
 - Modelo: {{ model_id }} — {{ model_name }}
@@ -85,28 +91,21 @@ Analiza el siguiente segmento y genera un análisis detallado en español.
 {% endfor %}{% else %}- Sin alertas activas{% endif %}
 
 ## INSTRUCCIONES
-Genera:
+Genera el análisis llenando los campos del schema:
 
-**ANÁLISIS** (3-4 oraciones):
-Describe el estado del segmento, las causas probables de las alertas y el impacto en el negocio.
-Menciona la semana de performance {{ performance_week }} al hablar de Gini/KS/Tasas de incumplimiento.
+- `analisis`: 3-4 oraciones describiendo el estado del segmento, las causas
+  probables de las alertas y el impacto en el negocio. Menciona la semana de
+  performance {{ performance_week }} cuando hables de Gini/KS/Tasas de
+  incumplimiento.
+- `acciones`: entre 3 y 5 acciones concretas y accionables, cada una con
+  prioridad CRÍTICO/ALTA/MEDIA/MONITOREO, ordenadas por prioridad descendente.
+  Si hay violaciones de ordering, alguna acción debe mencionar qué bins están
+  involucrados.
 
-**ACCIONES RECOMENDADAS** (3-5 acciones, formato JSON):
-```json
-[
-  {
-    "prioridad": "[CRÍTICO|ALTA|MEDIA|MONITOREO]",
-    "accion": "Título corto de la acción",
-    "detalle": "Descripción específica de qué hacer y por qué"
-  }
-]
-```
-
-IMPORTANTE:
-- NO menciones F1-score, precision, recall ni AUC binario
-- USA los términos: Gini, KS, PSI, Tasa de Incumplimiento (b_malo)
-- Las acciones deben ser concretas y accionables
-- Si hay violaciones de ordering, menciona qué bins están involucrados
+REGLAS DE CONTENIDO:
+- NO menciones F1-score, precision, recall ni AUC binario.
+- USA los términos: Gini, KS, PSI, Tasa de Incumplimiento (b_malo).
+- Las acciones deben ser concretas y accionables, no genéricas.
 """
 
 _jinja_env = Environment(loader=BaseLoader())

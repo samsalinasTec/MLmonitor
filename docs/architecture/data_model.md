@@ -291,7 +291,7 @@ Outcomes a nivel de crédito individual. Una fila por `(credito_id, model_regist
 
 Razón para existir (decisions §8.2.5): Gini y KS desde datos individuales no tienen error de discretización; las curvas de Lorenz son exactas. Es la fuente primaria; `FACT_PERFORMANCE_BINNED` es fallback.
 
-Trade-off: más filas leídas por cálculo (~28K vs 10 en SQLite). Ya documentado: para Postgres con 1M+ créditos se recomienda el índice compuesto `(model_registry_id, origination_week, ventana)` — ver [`../backlog.md`](../backlog.md) §1.
+Trade-off: más filas leídas por cálculo (~28K vs 10 en SQLite). Para Postgres con 1M+ créditos se declara el índice compuesto `ix_fact_perf_individual_lookup (model_registry_id, origination_week, ventana)` en `db/models.py` (Iter 3 §B1). Aplicación incremental a RDS sin drop+rebuild: `CREATE INDEX IF NOT EXISTS` documentado en `upgrades.md §L.Iter3`.
 
 ### 3.4 `FACT_METRICS_HISTORY`
 
@@ -307,10 +307,56 @@ Historial de métricas calculadas. Una fila por `(model_registry_id, calculation
 
 Esta es la única tabla que escribe el **Pipeline**, no el ETL. La única tabla que **no se sincroniza** en el escenario VM/Cloud legado (decisions §8.2.15) — queda obsoleto pero útil como contexto.
 
-Conocidos (pendientes de resolver antes de BI — ver [`../backlog.md`](../backlog.md)):
+Conocidos (decisión arquitectónica del 2026-05-18, Iter 3 §B3+§B4 diferidos — ver `decisions.md §8.2.32`):
 
-- **No es BI-friendly**: requiere 3 JOINs para obtener fila legible; el target va embebido en `metric_name` sin columnas separadas; `origination_week` de Gini/KS vive dentro del JSON `details`.
-- **Acoplamiento `metric_id` ↔ SCD2**: si un threshold se versiona, el nuevo `id` es tratado como una métrica distinta por el `UniqueConstraint`, permitiendo insertar duplicados conceptuales.
+- **No es BI-friendly de raíz**: requiere 3 JOINs para obtener fila legible (`MetaMetricThresholds` para `metric_name`, `MetaModelRegistry` para `submodel_id`, `MetaVariables` para `variable_name`); el target va embebido en `metric_name` sin columnas separadas; `origination_week` de Gini/KS vive dentro del JSON `details`. **Decisión:** se prefiere mantener la normalización máxima del esquema estrella aunque obligue a JOINs. Re-evaluar cuando el consumo desde BI (Power BI / Tableau) se vuelva un dolor real medible.
+- **Acoplamiento `metric_id` ↔ SCD2**: si un threshold se versiona, el nuevo `id` es tratado como una métrica distinta por el `UniqueConstraint`, permitiendo insertar duplicados conceptuales. Mismo diferimiento que el bullet anterior — la solución natural (`metric_name` denormalizado en la UC) va junto con la denormalización BI.
+
+### 3.5 `FACT_PIPELINE_RUNS`
+
+Histórico operativo del pipeline (Iter 3 §E1). Append-only — una fila por invocación de `PipelineOrchestrator.run()` para un `(model_registry_id, calculation_week)`. Re-runs generan filas nuevas; BI usa `MAX(started_at)` para obtener el más reciente.
+
+- `model_registry_id`: FK a `META_MODEL_REGISTRY.id`. Como el registry es SCD2 con N filas por modelo (una por segmento), apunta al **primer registro activo** ordenado por `submodel_id` — mismo criterio que `ReportBuilder` para `primary_target_variable`. El run es conceptualmente del modelo entero, no de un segmento.
+- `calculation_week`: semana ISO del cálculo (mismo valor que el `--date` del orchestrator).
+- `started_at`, `finished_at`: timestamps UTC del run.
+- `status` (str): `"running"` (entre `start()` y `finish()`), `"success"` (todos los steps OK), `"partial"` (steps obligatorios OK pero algún opcional como S3/email falló), `"failed"` (el orchestrator levantó excepción).
+- `metrics_step_seconds`, `report_step_seconds`, `pdf_step_seconds`, `s3_step_seconds`, `email_step_seconds`: tiempos por step (float, segundos). `report_step_seconds` incluye el LLM si se invocó.
+- `s3_uri`: URI del PDF subido (nullable — null si S3 desactivado o falló).
+- `fleet_summary` (JSONText): `{"total": N, "ok": N, "warning": N, "critical": N}` derivado de `AnalysisContext.fleet_summary`.
+- `error_message`, `error_stack`: poblados solo si `status="failed"`.
+- `loaded_at`: timestamp de inserción.
+
+**Persistido por** `pipeline/run_recorder.py::PipelineRunRecorder` con mini-sesiones independientes — sobrevive a rollbacks de los steps del orchestrator.
+
+**Index** `ix_fact_pipeline_runs_lookup (model_registry_id, calculation_week, started_at)` para queries de tendencia.
+
+**Uso típico:**
+
+```sql
+-- Último run por (modelo, semana)
+SELECT DISTINCT ON (model_registry_id, calculation_week) *
+FROM "FACT_PIPELINE_RUNS"
+ORDER BY model_registry_id, calculation_week, started_at DESC;
+
+-- Tendencia de tiempo del pipeline (últimos 6 meses)
+SELECT calculation_week,
+       AVG(metrics_step_seconds + report_step_seconds + pdf_step_seconds) AS avg_core_seconds
+FROM "FACT_PIPELINE_RUNS"
+WHERE status IN ('success', 'partial')
+  AND calculation_week > CURRENT_DATE - INTERVAL '6 months'
+GROUP BY calculation_week
+ORDER BY calculation_week;
+
+-- Fallos recientes con stack
+SELECT calculation_week, model_registry_id, error_message
+FROM "FACT_PIPELINE_RUNS"
+WHERE status = 'failed'
+ORDER BY started_at DESC LIMIT 10;
+```
+
+**Notas operativas:**
+- Si `PipelineOrchestrator` truena antes de `recorder.start()` (ej. resolución de `model_registry_id` para un model_id inexistente), no queda fila — esperado, no hay sentido registrar un run para un modelo que no existe. El error queda en CloudWatch Logs vía exit 1.
+- El runbook de alarmas SNS (`docs/infrastructure/aws_deployment.md §4`) usa esta tabla como fuente de auditoría histórica complementaria a CloudWatch Logs (retención 30 días).
 
 ---
 

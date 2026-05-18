@@ -49,3 +49,33 @@ def resolve_model_ids(session: Session, explicit: str | None) -> list[str]:
             "Ejecuta: poetry run python scripts/run_bootstrap.py --model-id <ID>"
         )
     return sorted(model_ids)
+
+
+def resolve_model_registry_id(session: Session, model_id: str) -> int:
+    """
+    Resuelve el `id` de la primera fila activa de `META_MODEL_REGISTRY` para un
+    `model_id`. Útil para FACTs que necesitan FK al registry (ej. FACT_PIPELINE_RUNS)
+    pero no representan a un (sub)segmento específico.
+
+    Como META_MODEL_REGISTRY es SCD2 con N filas por modelo (una por submodel_id /
+    segmento), se toma el menor `submodel_id` activo — mismo criterio que
+    `ReportBuilder` para resolver `primary_target_variable`.
+
+    Raises:
+        ValueError: si no hay ningún registro activo para `model_id`.
+    """
+    row = (
+        session.query(MetaModelRegistry)
+        .filter(
+            MetaModelRegistry.model_id == model_id,
+            MetaModelRegistry.valid_to.is_(None),
+        )
+        .order_by(MetaModelRegistry.submodel_id)
+        .first()
+    )
+    if row is None:
+        raise ValueError(
+            f"No hay registro activo en META_MODEL_REGISTRY para model_id={model_id!r}. "
+            "¿Falta correr el bootstrap?"
+        )
+    return row.id

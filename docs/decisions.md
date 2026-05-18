@@ -736,3 +736,78 @@ Además, `upgrades.md` proponía promover `MISSING_SENTINEL` a per-variable en `
 - Smoke test del pipeline en ECS Fargate con la imagen actualizada.
 - Próxima iteración (BI / observabilidad): B1 (índice compuesto), B3 (denormalizar `FACT_METRICS_HISTORY`), E1 (`FACT_PIPELINE_RUNS`), E2 (alarmas SNS).
 
+## §8.2.32 Iteración 3 — Índices de consulta, histórico operativo del pipeline y diferimiento de B3/B4
+
+**Fecha:** 2026-05-18 · **Estado:** Aceptado · **Complementa:** §8.2.31 (Iter 2).
+
+**Contexto.** Tras Iter 2, el código ya soporta multi-modelo con configuración por modelo + reglas de severidad versionadas. Quedaban abiertos cuatro pendientes de `upgrades.md §L.Iter3` (todos P1):
+
+1. **Índices que evitan degradación de queries** a medida que crezca el histórico en RDS (`§B1` para `FACT_PERFORMANCE_INDIVIDUAL`, `§B2` para tres FACT + un META).
+2. **Histórico operativo del pipeline** (`§E1`): hoy si el LLM tarda 30 min o un step truena, no queda rastro estructurado en DB — solo en CloudWatch Logs (retención 30 días). Tampoco hay serie temporal para detectar degradación de Bedrock o crecimiento del dataset.
+3. **Alarmas SNS** (`§E2`) cuando el cron semanal falla — hoy el operador se entera cuando *no llega* el correo del lunes.
+4. **`§B3`+`§B4`: denormalización en `FACT_METRICS_HISTORY`** para consumo BI directo (eliminar 3 JOINs + parsing de `details` JSON).
+
+**Decisión.**
+
+1. **B1 — `Index("ix_fact_perf_individual_lookup", "model_registry_id", "origination_week", "ventana")`** declarado en `FactPerformanceIndividual.__table_args__` (`db/models.py`). El primer `Index(...)` compuesto del codebase — hasta ahora solo había `index=True` por columna individual y `UniqueConstraint`s.
+
+2. **B2 con alcance reducido tras auditoría del schema:**
+   - **Descartados:** `FACT_DISTRIBUTIONS (model_registry_id, variable_id, origination_week)` y `FACT_METRICS_HISTORY (model_registry_id, calculation_week)` — la `UniqueConstraint` actual ya los cubre como **prefijo** de izquierda, por lo que Postgres y SQLite ya pueden usarla para los filtros equivalentes. Crear un índice paralelo sería duplicación inútil con coste de mantenimiento de write.
+   - **Implementado:** `Index("ix_fact_perf_binned_metric", "model_registry_id", "origination_week", "metric_type")` en `FactPerformanceBinned`. La UC tiene `execution_week` intercalado y no sirve como prefijo del query de `business_metrics`.
+   - **Implementado:** `Index("ix_meta_metric_thresholds_active", "valid_to", postgresql_where=text("valid_to IS NULL"), sqlite_where=text("valid_to IS NULL"))`. Es el primer índice parcial del codebase. El `AlertEvaluator` carga **todos** los thresholds vigentes (`WHERE valid_to IS NULL`) en cada run del pipeline; el parcial acota el scan al subconjunto activo (~10× menor que el total con SCD2 a lo largo del tiempo).
+
+3. **E1 — Nueva tabla `FACT_PIPELINE_RUNS` (append-only).** Una fila por invocación del orchestrator para un `(model_registry_id, calculation_week)`. Columnas: `id`, `model_registry_id` (FK), `calculation_week`, `started_at`, `finished_at`, `status` (`"running" | "success" | "partial" | "failed"`), 5 `*_step_seconds` (metrics / report / pdf / s3 / email), `s3_uri`, `fleet_summary` (JSONText), `error_message`, `error_stack`, `loaded_at`. Index `(model_registry_id, calculation_week, started_at)` para queries de tendencia.
+
+4. **Nuevo módulo `src/mlmonitor/pipeline/run_recorder.py::PipelineRunRecorder`.** API: `start()` (INSERT con `status="running"`, devuelve id), `record_step(name, seconds)`, `set_s3_uri(uri)`, `finish(status, fleet_summary=..., error_message=..., error_stack=...)`. Cada operación abre/cierra su propia mini-sesión vía `get_session(engine)` — independiente de las sesiones de los steps del orchestrator. Esto garantiza que la fila se persiste aunque algún step rollbackee.
+
+5. **`PipelineOrchestrator.run()` instrumentado.** Pre-step 1: resolver `model_registry_id` (helper nuevo `data/model_registry.py::resolve_model_registry_id`) + `recorder.start()`. Cuerpo envuelto en `try/except Exception as e:`. Por step: `t0 = time.perf_counter(); ... ; recorder.record_step(name, time.perf_counter() - t0)`. En `try` exitoso: `recorder.finish(_derive_final_status(steps), fleet_summary=context.fleet_summary)`. En `except`: `recorder.finish("failed", error_message=str(e), error_stack=traceback.format_exc(), fleet_summary=getattr(context, "fleet_summary", None))` y **re-raise** (preserva el contrato de `scripts/run_pipeline.py` — exit 1, sin cambio de UX para el operador).
+
+6. **Append-only (sin `UniqueConstraint`).** Alineado con la convención del proyecto: "FACT es append-only" (CLAUDE.md §4). Re-runs generan filas nuevas; BI usa `MAX(started_at)` para el más reciente. Bonus: el histórico de re-runs es información útil ("¿cuántas veces hubo que re-correr antes de éxito?").
+
+7. **E2 — Documentación pura de infra.** Cero cambios de código. Nueva §4 en `docs/infrastructure/aws_deployment.md` con runbook completo: SNS Topic `mlmonitor-failures` (CLI `aws sns create-topic`), email subscription, log metric filter sobre `/ecs/mlmonitor` con pattern `?"[run_pipeline] ✗" ?"FAILED" ?"ERROR"` (métrica `MLMonitor/PipelineFailures`), CloudWatch Alarm `Sum >= 1` en 5 min → SNS. Smoke test con `aws ecs run-task --overrides ... exit 1`. La auditoría histórica complementaria queda cubierta por `FACT_PIPELINE_RUNS` (E1).
+
+8. **B3 y B4 diferidos explícitamente.** Tras revisión con el usuario el 2026-05-18, se opta por **mantener la normalización máxima** del esquema estrella. Razón: el diseño actual prioriza pureza dimensional sobre conveniencia BI, y los JOINs adicionales (`FACT_METRICS_HISTORY → META_METRIC_THRESHOLDS` para `metric_name`, `→ META_VARIABLES` para `variable_name`, parsing de `details` JSON para `origination_week`) son aceptables hoy. Se re-evaluará cuando el consumo desde BI (Power BI / Tableau) se vuelva un dolor real medible. B3 y B4 se trasladan a `upgrades.md §L · Items que quedaron descartados o consolidados` con el motivo del 2026-05-18.
+
+**Razones.**
+
+- **`model_registry_id` (no `model_id` string) como FK en `FACT_PIPELINE_RUNS`.** Mantiene consistencia con el resto del schema FACT (todas las FACT tienen FK al registry, ninguna usa el `model_id` string como identificador) y respeta integridad referencial. Pero como `META_MODEL_REGISTRY` es SCD2 con N filas por modelo (una por segmento), surge el problema "¿cuál de las 11 filas activas de BAZBOOST_V1 usar?". Se resuelve con `resolve_model_registry_id`: la primera fila activa ordenada por `submodel_id`. Mismo criterio que `ReportBuilder` para `primary_target_variable`. Trade-off: el FK apunta a un segmento específico aunque el run conceptualmente sea del modelo entero; aceptable porque las filas del registry comparten los campos identitarios (`model_id`, `model_name`, etc.) — la elección es semánticamente neutra. Cuando se haga `§B5` (separar `META_MODELS` de `META_SUBMODELS`), el FK se redirige limpio a `META_MODELS.id`.
+- **Append-only sobre upsert con unique constraint.** Coherente con la regla del proyecto. Permite que un re-run preserve el histórico ("este lunes corrió 3 veces hasta que Bedrock dejó de throttlear"). El cost de almacenamiento es trivial (1 fila por run; ~52 runs/año por modelo).
+- **Mini-sesiones independientes en el recorder.** Si comparte sesión con un step y el step rollbackea, la fila se pierde. Sesión propia → cada INSERT/UPDATE se commitea inmediato, garantía de persistencia incluso ante fallos de los steps.
+- **`time.perf_counter()` sobre `time.time()`.** Monotónico, inmune a NTP. Lo correcto para medir duración.
+- **`report_step_seconds` cubre Step 2 entero (build + LLM).** Desglose finer (separar `llm_step_seconds`) requeriría exponer telemetría desde `BedrockAnalyst._call_llm_structured` y propagarla a través de `ReportBuilder.build`. Fuera de scope; queda para iteración futura si el observability lo demanda.
+- **`success` vs `partial`.** Steps opcionales (`s3_upload`, `email`) pueden fallar sin que el pipeline truene (try/except local en el orchestrator); en ese caso los steps obligatorios (metrics, report, pdf) sí completaron y el run se marca como `partial`. Esto distingue degradación parcial (PDF en disco pero S3 falló) de éxito limpio sin tener que parsear el JSON `steps` en BI.
+- **B2 con alcance reducido es una mejora del plan original, no un recorte.** Auditar el schema antes de declarar reveló que dos de los cuatro índices propuestos en `upgrades.md` ya estaban cubiertos por prefijos de UC existentes. Crearlos hubiera sido duplicación; documentar la observación es preferible a implementar mecánicamente.
+- **E2 puramente en infra (sin código).** Cualquier publicación a SNS desde código introduce: (a) dependencia de runtime de boto3 SNS en el orchestrator, (b) un nuevo permiso IAM (`sns:Publish`) en el task role, (c) acoplamiento del pipeline a infraestructura específica de AWS. CloudWatch Logs → metric filter → alarm → SNS es declarativo, no requiere permisos extra en el task, y es trivialmente reemplazable si se cambia el deploy.
+- **B3/B4 diferidos por decisión arquitectónica, no por prioridad.** El usuario quiere mantener el esquema estrella normalizado al máximo aun cuando obligue a JOINs. Es una decisión legítima — la normalización tiene beneficios (integridad, atomicidad de updates, single source of truth para `metric_name`). El dolor de BI es hipotético hoy; cuando sea real y medible se atacará con datos. Documentar la decisión evita re-litigarla en cada sesión.
+
+**Alternativas descartadas.**
+
+- **E2 como try/except en `run_pipeline.py` que publique a SNS directo via boto3.** Detección más rápida y mensaje rico (model_id, step, error). Descartada por acoplamiento de código a infra + IAM nuevo + tener que mantener un código adicional cuando CloudWatch Logs ya da la señal limpiamente.
+- **E2 como Lambda que polea `FACT_PIPELINE_RUNS` y publique a SNS.** Auditable y flexible pero requiere agregar Lambda + EventBridge Rule + DLQ + IAM por un cron semanal. Sobre-engineering.
+- **`FACT_PIPELINE_RUNS` con `UniqueConstraint(model_registry_id, calculation_week)` y upsert.** Limpio para queries directos pero pierde el histórico de re-runs. La pregunta "¿cuántas veces hubo que re-correr antes de éxito?" se vuelve no contestable.
+- **Aplicar índices a RDS con script `scripts/apply_indexes.py` (CREATE INDEX IF NOT EXISTS).** Reutilizable a futuro pero introduce el primer ladrillo de "gestión de migraciones" en un proyecto que hoy no tiene Alembic. Si después se adopta Alembic, el script se vuelve deuda. Decisión: solo declarar en `db/models.py`; aplicación a RDS como pendiente operativo manual (mismo patrón que Iter 1+2), con el snippet `CREATE INDEX IF NOT EXISTS` documentado en `upgrades.md §L.Iter3` para correr directamente.
+- **Desglose por step de la sub-medición del LLM dentro de `report_step_seconds`.** Útil para detectar Bedrock degradado, pero requiere refactor de la interfaz `analyst.analyze_fleet → ReportBuilder.build` para devolver telemetría. Diferido hasta que haya señal de que el LLM se está volviendo el cuello de botella.
+
+**Trade-offs.**
+
+- **Una tabla FACT más:** crecimiento ~52 filas/año/modelo. Trivial.
+- **`PipelineOrchestrator.run()` ganó ~30 líneas de instrumentación.** Las funciones puras de los steps no cambian; el `try/except` es lo único que se ramifica.
+- **El recorder agrega 2 commits extra por run** (start + finish). Latencia despreciable vs ~12s totales del pipeline.
+- **Si `recorder.start()` falla** (DB unreachable), el orchestrator no captura — re-lanza. Aceptable: si la DB no está disponible, el resto de los steps fallarán igual. Mejor fallar temprano y ruidoso.
+- **Si el pipeline truena ANTES de `recorder.start()`** (ej. resolución de `model_registry_id` para un model_id inexistente), no queda fila en `FACT_PIPELINE_RUNS`. Es esperado — no hay sentido registrar un run para un modelo que no existe. El error queda en CloudWatch Logs vía el exit 1 del script.
+
+**Verificación.**
+
+- **172/172 tests passing** (+10 vs Iter 2): +4 en `test_models_indexes.py` (verifica declaración de los 4 nuevos Index + el partial-where), +6 en `test_pipeline_run_recorder.py` (start, finish-success, finish-failed, append-only de re-runs, validaciones de API).
+- Drop + bootstrap (`scripts/run_bootstrap.py --model-id BAZBOOST_V1`) genera SQLite con `FACT_PIPELINE_RUNS` y los 4 índices nuevos. `sqlite3 .indexes` confirma presencia; `SELECT name, sql FROM sqlite_master WHERE name='ix_meta_metric_thresholds_active'` confirma `WHERE valid_to IS NULL` en el DDL.
+- ETL ventana rodante (2026-03-16 → 04-06) + pipeline 2026-04-06 → 1 fila en `FACT_PIPELINE_RUNS` con `status='success'`, timings poblados (metrics 5.10s, report 4.33s, pdf 2.57s, s3 1.43s), `fleet_summary={"total":11,"ok":8,"warning":2,"critical":1}`, `s3_uri` poblado, sin error.
+- Re-run del mismo pipeline → 2 filas distintas en la tabla (append-only confirmado).
+- Path de error del orchestrator validado por test unitario `test_finish_failed_persists_error` (cubre la misma rama del `except` que ejecutaría el orchestrator).
+
+**Pendiente.**
+
+- Aplicar los 4 `CREATE INDEX IF NOT EXISTS` a RDS productivo (snippet en `upgrades.md §L.Iter3`).
+- Crear SNS Topic + log metric filter + CloudWatch Alarm + email subscription en AWS (runbook en `docs/infrastructure/aws_deployment.md §4`).
+- Smoke test en ECS Fargate con la imagen actualizada — verificar que `FACT_PIPELINE_RUNS` se popula correctamente en RDS productivo y que la alarma dispara con el `exit 1` de prueba.
+- Próximas iteraciones según `upgrades.md §L`: Iter 4 (multi-modelo profundo: A8, F1, C5, C6) cuando entre el segundo modelo. Iter N (CI/CD, calidad: D1, D2, F3, E4, E5) como deuda continua.
+

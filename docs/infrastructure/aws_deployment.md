@@ -179,7 +179,90 @@ aws secretsmanager get-secret-value --secret-id ml-monitoring/SES --query Secret
 
 ---
 
-## 4. Archivos en el repo relevantes al deploy
+## 4. Observabilidad / alarmas (E2)
+
+Patrón decidido en Iteración 3 (2026-05-18): la detección de fallas del cron se hace en **infraestructura pura** — CloudWatch Logs metric filter → CloudWatch Alarm → SNS Topic → Email. Cero acoplamiento al código del pipeline. La pipeline ya emite las líneas que dispararán la alarma (`[run_pipeline] ✗ Modelo <X> falló: ...`) y, al fallar la task de ECS, el exit code propaga a `lastStatus=STOPPED`.
+
+**Recursos a crear (pendiente operativo, manual hoy; Terraform después):**
+
+| Recurso | Identificador propuesto | Nota |
+|---|---|---|
+| SNS Topic | `mlmonitor-failures` | Topic standard, encriptación con la SSE-KMS de AWS por defecto. |
+| Email subscription | email del operador (`samsalinast@gmail.com` u otro corporativo) | Requiere confirmación del subscriber tras crear. |
+| Log metric filter | `MLMonitorPipelineFailure` en `/ecs/mlmonitor` | Pattern: `?"[run_pipeline] ✗" ?"failed" ?"ERROR"` → métrica `MLMonitor/PipelineFailures` (value=1, default 0). |
+| CloudWatch Alarm | `mlmonitor-pipeline-failure` | Métrica `MLMonitor/PipelineFailures`, `Sum >= 1` durante 5 min, `TreatMissingData=notBreaching` → publica al topic. |
+| (Opcional) Alarm de ausencia | `mlmonitor-pipeline-missing` | Métrica custom o sobre `AWS/ECS RunningTaskCount`: si el lunes pasaron >3h sin run exitoso, alertar (cubre el escenario de Scheduler que falla silenciosamente). |
+
+### 4.1 Crear el topic + suscripción
+
+```bash
+aws sns create-topic --name mlmonitor-failures --region us-east-1
+# Output: TopicArn=arn:aws:sns:us-east-1:930067561911:mlmonitor-failures
+
+aws sns subscribe \
+  --topic-arn arn:aws:sns:us-east-1:930067561911:mlmonitor-failures \
+  --protocol email \
+  --notification-endpoint samsalinast@gmail.com
+# El destinatario recibe un email de confirmación que debe aceptar.
+```
+
+### 4.2 Metric filter sobre el log group
+
+```bash
+aws logs put-metric-filter \
+  --log-group-name /ecs/mlmonitor \
+  --filter-name MLMonitorPipelineFailure \
+  --filter-pattern '?"[run_pipeline] ✗" ?"FAILED" ?"ERROR"' \
+  --metric-transformations \
+    metricName=PipelineFailures,metricNamespace=MLMonitor,metricValue=1,defaultValue=0
+```
+
+### 4.3 CloudWatch Alarm → SNS
+
+```bash
+aws cloudwatch put-metric-alarm \
+  --alarm-name mlmonitor-pipeline-failure \
+  --alarm-description "MLMonitor pipeline failure detected in CloudWatch Logs" \
+  --metric-name PipelineFailures \
+  --namespace MLMonitor \
+  --statistic Sum \
+  --period 300 \
+  --threshold 1 \
+  --comparison-operator GreaterThanOrEqualToThreshold \
+  --evaluation-periods 1 \
+  --treat-missing-data notBreaching \
+  --alarm-actions arn:aws:sns:us-east-1:930067561911:mlmonitor-failures
+```
+
+### 4.4 Smoke test
+
+```bash
+# Forzar exit 1 desde la task — debe disparar la alarma y llegar email en ~5 min.
+aws ecs run-task \
+  --cluster mlmonitor-cluster \
+  --launch-type FARGATE \
+  --task-definition mlmonitor \
+  --network-configuration "awsvpcConfiguration={subnets=[subnet-0dcfd7651de484c9b,subnet-0e5ed52bc4d23416d],securityGroups=[sg-0c54b54ed399b471c],assignPublicIp=ENABLED}" \
+  --overrides '{"containerOverrides":[{"name":"mlmonitor","command":["bash","-c","echo [run_pipeline] ✗ FAILED test; exit 1"]}]}'
+```
+
+### 4.5 Cobertura complementaria: histórico operativo en DB
+
+Independiente de la alarma — el orchestrator persiste cada run en **`FACT_PIPELINE_RUNS`** (Iter 3 §E1). Esto da auditabilidad sin depender de CloudWatch Logs (retención 30 días). Para inspeccionar las últimas N corridas:
+
+```sql
+SELECT id, model_registry_id, calculation_week, status,
+       metrics_step_seconds, report_step_seconds, error_message
+FROM "FACT_PIPELINE_RUNS"
+ORDER BY started_at DESC
+LIMIT 10;
+```
+
+Cuando se conecte BI directamente a RDS, esta tabla es la fuente para dashboards de "tendencia del tiempo de pipeline" y "tasa de fallo por modelo".
+
+---
+
+## 5. Archivos en el repo relevantes al deploy
 
 - `mlmonitor/Dockerfile` — imagen del pipeline.
 - `mlmonitor/docker/entrypoint.sh` — sync + ETL + Pipeline.
@@ -194,7 +277,7 @@ aws secretsmanager get-secret-value --secret-id ml-monitoring/SES --query Secret
 
 ---
 
-## 5. Deuda técnica (TODOs con prioridad)
+## 6. Deuda técnica (TODOs con prioridad)
 
 1. **Cerrar SG de RDS.** Hoy `sg-02e9d008b587402f7` acepta `0.0.0.0/0:5432`. Dejar solo al `sg-0c54b54ed399b471c` y a las IPs de desarrollo autorizadas.
 2. **Salir de SES sandbox.** Ticket a AWS Support. Hoy solo se puede enviar a identidades verificadas.

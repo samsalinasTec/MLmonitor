@@ -15,11 +15,13 @@ from sqlalchemy import (
     Date,
     DateTime,
     Float,
+    Index,
     Integer,
     String,
     Text,
     UniqueConstraint,
     ForeignKey,
+    text,
 )
 from sqlalchemy.orm import DeclarativeBase
 from sqlalchemy.types import TypeDecorator
@@ -117,6 +119,14 @@ class MetaMetricThresholds(Base):
         UniqueConstraint(
             "model_registry_id", "metric_name", "valid_from",
             name="uq_meta_metric_thresholds"
+        ),
+        # Iter 3 §B2: parcial sobre filas vigentes — acelera el scan del AlertEvaluator,
+        # que carga TODOS los thresholds activos en cada run del pipeline.
+        Index(
+            "ix_meta_metric_thresholds_active",
+            "valid_to",
+            postgresql_where=text("valid_to IS NULL"),
+            sqlite_where=text("valid_to IS NULL"),
         ),
     )
 
@@ -234,6 +244,12 @@ class FactPerformanceBinned(Base):
             "metric_type", "score_bin",
             name="uq_fact_performance_binned"
         ),
+        # Iter 3 §B2: la UC no sirve como prefijo porque los queries de business_metrics
+        # filtran por (model_registry_id, origination_week, metric_type) saltando execution_week.
+        Index(
+            "ix_fact_perf_binned_metric",
+            "model_registry_id", "origination_week", "metric_type",
+        ),
     )
 
     id = Column(Integer, primary_key=True, autoincrement=True)
@@ -263,6 +279,12 @@ class FactPerformanceIndividual(Base):
         UniqueConstraint(
             "credito_id", "model_registry_id", "ventana",
             name="uq_fact_perf_individual",
+        ),
+        # Iter 3 §B1: la UC (credito_id, model_registry_id, ventana) no cubre el query
+        # pattern de Gini/KS, que filtra por (model_registry_id, origination_week, ventana).
+        Index(
+            "ix_fact_perf_individual_lookup",
+            "model_registry_id", "origination_week", "ventana",
         ),
     )
 
@@ -331,3 +353,42 @@ class FactMetricsHistory(Base):
     details = Column(JSONText)  # detalles adicionales por métrica
     calculated_from = Column(String(50))  # FACT_DISTRIBUTIONS | FACT_PERFORMANCE_OUTCOMES
     calculated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+
+class FactPipelineRuns(Base):
+    """Histórico operativo del pipeline (Iter 3 §E1). Solo append.
+
+    Una fila por invocación de PipelineOrchestrator.run() para un
+    (model_registry_id, calculation_week). Re-runs generan filas nuevas;
+    el BI usa MAX(started_at) para obtener el run más reciente — alineado
+    con la convención FACT append-only.
+
+    Usa el id del PRIMER registro activo del modelo en META_MODEL_REGISTRY
+    (orden por submodel_id), no un model_id string, para mantener la FK
+    consistente con el resto del schema.
+    """
+
+    __tablename__ = "FACT_PIPELINE_RUNS"
+    __table_args__ = (
+        Index(
+            "ix_fact_pipeline_runs_lookup",
+            "model_registry_id", "calculation_week", "started_at",
+        ),
+    )
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    model_registry_id = Column(Integer, ForeignKey("META_MODEL_REGISTRY.id"), nullable=False, index=True)
+    calculation_week = Column(Date, nullable=False, index=True)
+    started_at = Column(DateTime, nullable=False)
+    finished_at = Column(DateTime, nullable=True)
+    status = Column(String(20), nullable=False)  # "running" | "success" | "partial" | "failed"
+    metrics_step_seconds = Column(Float, nullable=True)
+    report_step_seconds = Column(Float, nullable=True)  # incluye LLM si se invocó
+    pdf_step_seconds = Column(Float, nullable=True)
+    s3_step_seconds = Column(Float, nullable=True)
+    email_step_seconds = Column(Float, nullable=True)
+    s3_uri = Column(String(500), nullable=True)
+    fleet_summary = Column(JSONText, nullable=True)  # {total, ok, warning, critical}
+    error_message = Column(Text, nullable=True)
+    error_stack = Column(Text, nullable=True)
+    loaded_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))

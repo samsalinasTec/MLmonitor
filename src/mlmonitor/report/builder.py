@@ -14,8 +14,11 @@ from datetime import date, timedelta
 
 from sqlalchemy.orm import Session
 
-from config.settings import settings
 from mlmonitor.analyst.base import AnalysisContext, AnalysisResult, SegmentMetrics
+from mlmonitor.data.aggregation_rules import (
+    DEFAULT_AGGREGATION_RULES,
+    load_aggregation_rules,
+)
 from mlmonitor.db.models import (
     FactMetricsHistory,
     MetaMetricThresholds,
@@ -60,22 +63,32 @@ def _is_headline_alert(alert_key: str, primary_target: str) -> bool:
 def _aggregate_status(
     active_alerts: list[dict],
     primary_target: str,
+    rules: dict[str, float] | None = None,
 ) -> tuple[str, str]:
     """Calcula el estado agregado del segmento + razón corta.
 
     Reglas (ver docs/architecture/data_model.md §4.7):
     1. 1+ headline crítico → CRITICAL (inmediato)
-    2. ≥ status_crit_count_to_critical (5) agregables críticos → CRITICAL
-    3. ≥ status_crit_count_to_warning (3) agregables críticos,
+    2. ≥ status_crit_count_to_critical agregables críticos → CRITICAL
+    3. ≥ status_crit_count_to_warning agregables críticos,
        O headline en WARNING,
-       O ≥ status_warn_count_to_warning (8) agregables warnings → WARNING
+       O ≥ status_warn_count_to_warning agregables warnings → WARNING
     4. Resto → OK
 
     Headlines: psi_score, gini_<primary_target>, ks_<primary_target>.
     psi_max se excluye del conteo para no doble-contar (ya está cubierto
     por psi_<variable> individuales y por psi_score).
-    Umbrales configurables en config/settings.py.
+
+    `rules` viene de `META_AGGREGATION_RULES` vía `load_aggregation_rules`.
+    Si no se pasa (legacy/test path), se usa `DEFAULT_AGGREGATION_RULES`.
     """
+    if rules is None:
+        rules = DEFAULT_AGGREGATION_RULES
+
+    crit_to_critical = rules["status_crit_count_to_critical"]
+    crit_to_warning = rules["status_crit_count_to_warning"]
+    warn_to_warning = rules["status_warn_count_to_warning"]
+
     relevant = [a for a in active_alerts if a.get("metric") != "psi_max"]
 
     headline_crit = [
@@ -99,19 +112,19 @@ def _aggregate_status(
         if a["flag"] == 1 and not _is_headline_alert(a["metric"], primary_target)
     ]
 
-    if len(agg_crits) >= settings.status_crit_count_to_critical:
+    if len(agg_crits) >= crit_to_critical:
         return (
             "CRITICAL",
             f"{len(agg_crits)} alertas críticas agregadas "
-            f"(umbral: ≥{settings.status_crit_count_to_critical})",
+            f"(umbral: ≥{int(crit_to_critical)})",
         )
 
     triggers = []
-    if len(agg_crits) >= settings.status_crit_count_to_warning:
+    if len(agg_crits) >= crit_to_warning:
         triggers.append(f"{len(agg_crits)} crítica(s) agregada(s)")
     if headline_warn:
         triggers.append(f"{len(headline_warn)} headline en advertencia")
-    if len(agg_warns) >= settings.status_warn_count_to_warning:
+    if len(agg_warns) >= warn_to_warning:
         triggers.append(f"{len(agg_warns)} advertencia(s) agregadas")
 
     if triggers:
@@ -119,14 +132,20 @@ def _aggregate_status(
     return "OK", "sin alertas relevantes"
 
 
-def _build_severity_legend() -> list[dict]:
-    """Genera la leyenda de las reglas de _aggregate_status, leyendo umbrales
-    actuales de config.settings.
+def _build_severity_legend(rules: dict[str, float] | None = None) -> list[dict]:
+    """Genera la leyenda de las reglas de _aggregate_status leyendo el dict
+    de reglas resuelto.
 
-    Mantener sincronizado con _aggregate_status: cualquier cambio a las reglas
-    debe reflejarse aquí. Los counts vienen de settings para que la leyenda
-    impresa siempre refleje la configuración real.
+    `rules` se resuelve desde `META_AGGREGATION_RULES` en `ReportBuilder.build`
+    y se inyecta. Si no se pasa cae a `DEFAULT_AGGREGATION_RULES`.
     """
+    if rules is None:
+        rules = DEFAULT_AGGREGATION_RULES
+
+    crit_to_critical = int(rules["status_crit_count_to_critical"])
+    crit_to_warning = int(rules["status_crit_count_to_warning"])
+    warn_to_warning = int(rules["status_warn_count_to_warning"])
+
     return [
         {
             "status": "CRITICAL",
@@ -134,7 +153,7 @@ def _build_severity_legend() -> list[dict]:
             "rules": [
                 "1+ alerta crítica en métrica headline (PSI del score, "
                 "Gini o KS del target primario), o",
-                f"≥{settings.status_crit_count_to_critical} alertas críticas "
+                f"≥{crit_to_critical} alertas críticas "
                 "agregadas (PSI por variable, null_rate, gini/ks de targets "
                 "secundarios, violaciones de orden).",
             ],
@@ -143,11 +162,9 @@ def _build_severity_legend() -> list[dict]:
             "status": "WARNING",
             "label": STATUS_DISPLAY_ES["WARNING"],
             "rules": [
-                f"≥{settings.status_crit_count_to_warning} alertas críticas "
-                "agregadas, o",
+                f"≥{crit_to_warning} alertas críticas agregadas, o",
                 "1+ headline en advertencia, o",
-                f"≥{settings.status_warn_count_to_warning} alertas en "
-                "advertencia agregadas.",
+                f"≥{warn_to_warning} alertas en advertencia agregadas.",
             ],
         },
         {
@@ -259,6 +276,11 @@ class ReportBuilder:
             primary_lag = None
             performance_week = calculation_week
 
+        # Resolver reglas de severidad (A3): una sola lectura para todo el run.
+        # Hoy las reglas son fleet-level — model_registry_id=None. La firma del
+        # resolver soporta override por modelo cuando se necesite.
+        aggregation_rules = load_aggregation_rules(self.session)
+
         # Cargar mapa de métricas: {metric_id → metric_name}
         # + thresholds por segmento: {model_registry_id → {metric_name → {warn, crit, direction}}}
         threshold_rows = (
@@ -324,6 +346,7 @@ class ReportBuilder:
                 calculation_week=calculation_week,
                 performance_week=performance_week,
                 primary_target=resolved_primary_target,
+                aggregation_rules=aggregation_rules,
             )
             segments.append(seg_metrics)
 
@@ -371,7 +394,7 @@ class ReportBuilder:
             performance_coverage=performance_coverage,
             performance_weeks=performance_weeks,
             primary_target=resolved_primary_target,
-            severity_legend=_build_severity_legend(),
+            severity_legend=_build_severity_legend(aggregation_rules),
             global_performance=global_performance,
         )
 
@@ -395,6 +418,7 @@ class ReportBuilder:
         calculation_week: date,
         performance_week: date,
         primary_target: str,
+        aggregation_rules: dict[str, float] | None = None,
     ) -> SegmentMetrics:
         """Construye SegmentMetrics desde FACT_METRICS_HISTORY."""
         metrics_rows = (
@@ -486,7 +510,9 @@ class ReportBuilder:
         active_alerts.sort(key=lambda x: -x["flag"])
 
         # Overall status — ver _aggregate_status para la lógica detallada
-        overall_status, status_reason = _aggregate_status(active_alerts, primary_target)
+        overall_status, status_reason = _aggregate_status(
+            active_alerts, primary_target, aggregation_rules,
+        )
 
         # Business table — cada target tiene su propio origination_week (calculado internamente)
         business_df = get_business_metrics_table(

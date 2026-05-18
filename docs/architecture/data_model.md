@@ -133,7 +133,11 @@ Típicamente ambas coinciden (se surte poco después de scorear), pero no son el
 
 ### 1.7 `MISSING_SENTINEL = -100`
 
-Valor reservado para nulos en variables numéricas del scorecard. No se confunde con `NaN` porque los CSVs raw pueden traer el string `"-100"` literal. Vive en `bootstrap.py` e `incremental_etl.py`.
+Valor reservado para nulos en variables numéricas del scorecard. No se confunde con `NaN` porque los CSVs raw pueden traer el string `"-100"` literal.
+
+Es **model-wide**: vive en `data/inputs/model_configs/<model_id>/config.json` y se carga en `ModelConfig.missing_sentinel` (`src/mlmonitor/data/model_config.py`). El bootstrap y el ETL lo leen vía `self.config.missing_sentinel` (cero hardcode en código de runtime).
+
+Iteración 2 evaluó promoverlo a per-variable en `META_VARIABLES` y lo **descartó** (ADR §8.2.31): el sentinel es un marcador del extract upstream uniforme — se filtra antes del binning y nunca participa en cálculos. Para BAZBOOST_V1 todas las variables comparten el mismo valor; per-variable sería sobre-diseño hasta que aparezca un modelo con sentinel mixto.
 
 ### 1.8 Score invertido para Gini/KS
 
@@ -202,7 +206,27 @@ Columnas clave:
 
 El evaluador en `metrics/calculator.py::AlertEvaluator` busca por `(metric_name, model_registry_id)` y cae al global (`model_registry_id IS NULL`) si no existe — fallback que hoy queda inactivo (no se insertan globales) pero se preserva para futuras métricas globales explícitas. El acoplamiento `metric_id` ↔ SCD2 de thresholds es deuda conocida — ver [`../backlog.md`](../backlog.md) §4.
 
-### 2.4 `META_BASELINE_DISTRIBUTIONS`
+### 2.4 `META_AGGREGATION_RULES`
+
+Reglas de agregación de severidad (`status_*_count_*`). SCD2 por `(model_registry_id, rule_name, valid_from)`. Introducida en Iteración 2 (ADR §8.2.31); antes estas constantes vivían en `config/settings.py` sin auditoría ni override por modelo.
+
+Columnas clave:
+
+- `model_registry_id` (FK, **nullable**): `NULL` = regla global (aplica a todos los modelos); valor poblado = override por modelo.
+- `rule_name` (str): nombre canónico (`status_crit_count_to_critical`, `status_crit_count_to_warning`, `status_warn_count_to_warning`).
+- `rule_value` (float): valor del umbral. Float para tolerar reglas no-enteras a futuro (ej. ratios), aunque hoy todas son conteos enteros.
+- `description` (str, opcional): explicación humana persistida junto con el seed.
+
+Resolución (`src/mlmonitor/data/aggregation_rules.py::load_aggregation_rules`):
+1. Fila específica del modelo activa → usar.
+2. Fila global activa → usar.
+3. `DEFAULT_AGGREGATION_RULES` Python (red de seguridad con `logger.warning`).
+
+Patrón calcado de `AlertEvaluator.get_threshold` (`metrics/calculator.py:51`).
+
+Seed: `seed_default_global_rules(session, valid_from=date(2025, 1, 1))` invocado idempotentemente desde `ModelBootstrap._populate_meta_aggregation_rules`. Las 3 reglas se siembran como globales con los valores actuales (8/5/8 tras el ajuste de 2026-05-05).
+
+### 2.5 `META_BASELINE_DISTRIBUTIONS`
 
 Distribuciones de referencia del baseline de entrenamiento. Una sola fila por `(model_registry_id, variable_id, bin_label)`.
 
@@ -267,7 +291,7 @@ Outcomes a nivel de crédito individual. Una fila por `(credito_id, model_regist
 
 Razón para existir (decisions §8.2.5): Gini y KS desde datos individuales no tienen error de discretización; las curvas de Lorenz son exactas. Es la fuente primaria; `FACT_PERFORMANCE_BINNED` es fallback.
 
-Trade-off: más filas leídas por cálculo (~28K vs 10 en SQLite). Ya documentado: para Postgres con 1M+ créditos se recomienda el índice compuesto `(model_registry_id, origination_week, ventana)` — ver [`../backlog.md`](../backlog.md) §1.
+Trade-off: más filas leídas por cálculo (~28K vs 10 en SQLite). Para Postgres con 1M+ créditos se declara el índice compuesto `ix_fact_perf_individual_lookup (model_registry_id, origination_week, ventana)` en `db/models.py` (Iter 3 §B1). Aplicación incremental a RDS sin drop+rebuild: `CREATE INDEX IF NOT EXISTS` documentado en `upgrades.md §L.Iter3`.
 
 ### 3.4 `FACT_METRICS_HISTORY`
 
@@ -283,10 +307,56 @@ Historial de métricas calculadas. Una fila por `(model_registry_id, calculation
 
 Esta es la única tabla que escribe el **Pipeline**, no el ETL. La única tabla que **no se sincroniza** en el escenario VM/Cloud legado (decisions §8.2.15) — queda obsoleto pero útil como contexto.
 
-Conocidos (pendientes de resolver antes de BI — ver [`../backlog.md`](../backlog.md)):
+Conocidos (decisión arquitectónica del 2026-05-18, Iter 3 §B3+§B4 diferidos — ver `decisions.md §8.2.32`):
 
-- **No es BI-friendly**: requiere 3 JOINs para obtener fila legible; el target va embebido en `metric_name` sin columnas separadas; `origination_week` de Gini/KS vive dentro del JSON `details`.
-- **Acoplamiento `metric_id` ↔ SCD2**: si un threshold se versiona, el nuevo `id` es tratado como una métrica distinta por el `UniqueConstraint`, permitiendo insertar duplicados conceptuales.
+- **No es BI-friendly de raíz**: requiere 3 JOINs para obtener fila legible (`MetaMetricThresholds` para `metric_name`, `MetaModelRegistry` para `submodel_id`, `MetaVariables` para `variable_name`); el target va embebido en `metric_name` sin columnas separadas; `origination_week` de Gini/KS vive dentro del JSON `details`. **Decisión:** se prefiere mantener la normalización máxima del esquema estrella aunque obligue a JOINs. Re-evaluar cuando el consumo desde BI (Power BI / Tableau) se vuelva un dolor real medible.
+- **Acoplamiento `metric_id` ↔ SCD2**: si un threshold se versiona, el nuevo `id` es tratado como una métrica distinta por el `UniqueConstraint`, permitiendo insertar duplicados conceptuales. Mismo diferimiento que el bullet anterior — la solución natural (`metric_name` denormalizado en la UC) va junto con la denormalización BI.
+
+### 3.5 `FACT_PIPELINE_RUNS`
+
+Histórico operativo del pipeline (Iter 3 §E1). Append-only — una fila por invocación de `PipelineOrchestrator.run()` para un `(model_registry_id, calculation_week)`. Re-runs generan filas nuevas; BI usa `MAX(started_at)` para obtener el más reciente.
+
+- `model_registry_id`: FK a `META_MODEL_REGISTRY.id`. Como el registry es SCD2 con N filas por modelo (una por segmento), apunta al **primer registro activo** ordenado por `submodel_id` — mismo criterio que `ReportBuilder` para `primary_target_variable`. El run es conceptualmente del modelo entero, no de un segmento.
+- `calculation_week`: semana ISO del cálculo (mismo valor que el `--date` del orchestrator).
+- `started_at`, `finished_at`: timestamps UTC del run.
+- `status` (str): `"running"` (entre `start()` y `finish()`), `"success"` (todos los steps OK), `"partial"` (steps obligatorios OK pero algún opcional como S3/email falló), `"failed"` (el orchestrator levantó excepción).
+- `metrics_step_seconds`, `report_step_seconds`, `pdf_step_seconds`, `s3_step_seconds`, `email_step_seconds`: tiempos por step (float, segundos). `report_step_seconds` incluye el LLM si se invocó.
+- `s3_uri`: URI del PDF subido (nullable — null si S3 desactivado o falló).
+- `fleet_summary` (JSONText): `{"total": N, "ok": N, "warning": N, "critical": N}` derivado de `AnalysisContext.fleet_summary`.
+- `error_message`, `error_stack`: poblados solo si `status="failed"`.
+- `loaded_at`: timestamp de inserción.
+
+**Persistido por** `pipeline/run_recorder.py::PipelineRunRecorder` con mini-sesiones independientes — sobrevive a rollbacks de los steps del orchestrator.
+
+**Index** `ix_fact_pipeline_runs_lookup (model_registry_id, calculation_week, started_at)` para queries de tendencia.
+
+**Uso típico:**
+
+```sql
+-- Último run por (modelo, semana)
+SELECT DISTINCT ON (model_registry_id, calculation_week) *
+FROM "FACT_PIPELINE_RUNS"
+ORDER BY model_registry_id, calculation_week, started_at DESC;
+
+-- Tendencia de tiempo del pipeline (últimos 6 meses)
+SELECT calculation_week,
+       AVG(metrics_step_seconds + report_step_seconds + pdf_step_seconds) AS avg_core_seconds
+FROM "FACT_PIPELINE_RUNS"
+WHERE status IN ('success', 'partial')
+  AND calculation_week > CURRENT_DATE - INTERVAL '6 months'
+GROUP BY calculation_week
+ORDER BY calculation_week;
+
+-- Fallos recientes con stack
+SELECT calculation_week, model_registry_id, error_message
+FROM "FACT_PIPELINE_RUNS"
+WHERE status = 'failed'
+ORDER BY started_at DESC LIMIT 10;
+```
+
+**Notas operativas:**
+- Si `PipelineOrchestrator` truena antes de `recorder.start()` (ej. resolución de `model_registry_id` para un model_id inexistente), no queda fila — esperado, no hay sentido registrar un run para un modelo que no existe. El error queda en CloudWatch Logs vía exit 1.
+- El runbook de alarmas SNS (`docs/infrastructure/aws_deployment.md §4`) usa esta tabla como fuente de auditoría histórica complementaria a CloudWatch Logs (retención 30 días).
 
 ---
 
@@ -383,13 +453,15 @@ Las métricas se dividen en dos categorías:
   → No → OK
 ```
 
-Los umbrales de conteo son configurables en `config/settings.py`:
+Los umbrales de conteo viven en `META_AGGREGATION_RULES` (ver §2.4) y se resuelven una sola vez por reporte vía `mlmonitor.data.aggregation_rules.load_aggregation_rules(session)`. Valores actuales (sembrados como globales):
 
-| Setting | Valor | Efecto |
+| Regla | Valor | Efecto |
 |---|---|---|
-| `status_crit_count_to_critical` | 5 | ≥5 críticas agregables → CRITICAL |
-| `status_crit_count_to_warning` | 3 | ≥3 críticas agregables → WARNING |
+| `status_crit_count_to_critical` | 8 | ≥8 críticas agregables → CRITICAL |
+| `status_crit_count_to_warning` | 5 | ≥5 críticas agregables → WARNING |
 | `status_warn_count_to_warning` | 8 | ≥8 warnings agregables → WARNING |
+
+Cualquier cambio se inserta como nueva versión SCD2 (cerrar `valid_to` de la anterior + insertar nueva con `valid_from`). El resolver acepta `as_of` para reconstruir el estado vigente en una fecha histórica — útil para reproducir un PDF de hace meses bajo sus reglas originales.
 
 El campo `status_reason` en `SegmentMetrics` explica la razón del estado asignado (ej. `"headline crítico (PSI)"`, `"3 crítica(s) agregada(s); 2 headline en advertencia"`).
 

@@ -72,9 +72,10 @@ poetry install --with pipeline,dev
 # Se requiere --model-id (declara qué modelo se está bootstrapeando); el resto
 # de la config (primary_target, segments, variables, etc.) se lee de
 # data/inputs/model_configs/<model_id_lowercase>/config.json.
-# bootstrap_v2 (oficial) usa baseline derivado de variables_serc; bootstrap legacy
-# usa base_train_test_bb.csv. Ver ADR §8.2.29 y §8.2.30.
-poetry run python scripts/run_bootstrap_v2.py --model-id BAZBOOST_V1
+# El baseline se deriva de las primeras N semanas ISO de variables_serc_*.csv
+# (ver ADR §8.2.29). Hasta Iteración 2 coexistían bootstrap.py (WIDE legacy)
+# y bootstrap_v2.py; D7 los consolidó en un solo run_bootstrap.py.
+poetry run python scripts/run_bootstrap.py --model-id BAZBOOST_V1
 
 # ETL semanal — sin --model-id, itera sobre TODOS los modelos activos en
 # META_MODEL_REGISTRY (comportamiento default deseado para multi-modelo).
@@ -91,7 +92,7 @@ poetry run pytest
 poetry run pytest tests/test_psi.py -v
 
 # Reset de DB local (si cambió el schema)
-rm mlmonitor_dev.db && poetry run python scripts/run_bootstrap_v2.py --model-id BAZBOOST_V1
+rm mlmonitor_dev.db && poetry run python scripts/run_bootstrap.py --model-id BAZBOOST_V1
 ```
 
 **Para agregar un modelo nuevo** (ej. `RIESGO_OPERACIONAL_V1`):

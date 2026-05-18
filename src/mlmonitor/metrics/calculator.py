@@ -12,6 +12,7 @@ from datetime import date, timedelta
 
 from sqlalchemy.orm import Session
 
+from mlmonitor.data.model_config import ModelConfig
 from mlmonitor.db.models import (
     FactMetricsHistory,
     MetaMetricThresholds,
@@ -19,12 +20,20 @@ from mlmonitor.db.models import (
     MetaVariables,
 )
 from mlmonitor.metrics.decile_metrics import (
+    DECILE_MIN_OBS,
+    DECILE_WINDOW_WEEKS,
+    N_DECILES,
     check_decile_ordering_violations,
     get_decile_data_for_segment,
     persist_deciles_history,
 )
 from mlmonitor.metrics.performance import get_gini_ks_for_segment
-from mlmonitor.metrics.psi import get_max_psi, get_null_rates, get_psi_for_all_variables
+from mlmonitor.metrics.psi import (
+    PSI_WINDOW_WEEKS,
+    get_max_psi,
+    get_null_rates,
+    get_psi_for_all_variables,
+)
 
 _LABEL_TO_FLAG = {"OK": 0, "WARNING": 1, "CRITICAL": 2}
 
@@ -97,11 +106,29 @@ class AlertEvaluator:
 class MetricsCalculator:
     """
     Calcula todas las métricas y las escribe en FACT_METRICS_HISTORY.
+
+    `config` es opcional para preservar compatibilidad con tests legados
+    que instancian el calculator sin ModelConfig. Cuando no se provee,
+    las ventanas (PSI/decile) y umbrales (decile_min_obs, n_deciles) caen
+    a los defaults de módulo. En el pipeline real el orchestrator carga
+    siempre ModelConfig.for_model(model_id) y lo inyecta aquí.
     """
 
-    def __init__(self, session: Session):
+    def __init__(self, session: Session, config: ModelConfig | None = None):
         self.session = session
+        self.config = config
         self.evaluator = AlertEvaluator(session)
+
+        if config is not None:
+            self.psi_window_weeks = config.psi_window_weeks
+            self.decile_window_weeks = config.decile_window_weeks
+            self.decile_min_obs = config.decile_min_obs
+            self.n_deciles = config.n_deciles
+        else:
+            self.psi_window_weeks = PSI_WINDOW_WEEKS
+            self.decile_window_weeks = DECILE_WINDOW_WEEKS
+            self.decile_min_obs = DECILE_MIN_OBS
+            self.n_deciles = N_DECILES
 
     def run_for_model(
         self, model_id: str, current_week: date
@@ -214,6 +241,9 @@ class MetricsCalculator:
             current_week,
             primary_target_lag,
             target_vars,
+            min_obs=self.decile_min_obs,
+            n_deciles=self.n_deciles,
+            window_weeks=self.decile_window_weeks,
         )
         persist_deciles_history(
             self.session, model_registry_id, current_week, decile_data,
@@ -221,7 +251,8 @@ class MetricsCalculator:
 
         # --- PSI por variable (solo inputs/outputs) ---
         psi_by_var = get_psi_for_all_variables(
-            self.session, model_registry_id, variable_map, current_week
+            self.session, model_registry_id, variable_map, current_week,
+            window_weeks=self.psi_window_weeks,
         )
         for vname, psi_val in psi_by_var.items():
             _, label = self.evaluator.evaluate("psi", psi_val, model_registry_id)
@@ -256,7 +287,10 @@ class MetricsCalculator:
             ))
 
         # --- Tasas de nulos (solo inputs) ---
-        null_rates = get_null_rates(self.session, model_registry_id, variable_map, current_week)
+        null_rates = get_null_rates(
+            self.session, model_registry_id, variable_map, current_week,
+            window_weeks=self.psi_window_weeks,
+        )
         null_metric_id = self.evaluator.get_metric_id("null_rate", model_registry_id)
         for vname, null_rate in null_rates.items():
             _, label = self.evaluator.evaluate("null_rate", null_rate, model_registry_id)

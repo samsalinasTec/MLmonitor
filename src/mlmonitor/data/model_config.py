@@ -71,6 +71,17 @@ class ModelConfig:
     segments: list[SegmentConfig]
     name_mapping: dict[str, str]              # SERC → canónico (casos especiales)
     extra_serc_variables: list[str]           # variables a ignorar
+    # Ventanas y umbrales de cómputo (Iteración 2 A4). Opcionales: si el JSON
+    # no los trae se usan defaults conservadores. Permite que cada modelo
+    # declare cadencia y volumen propios sin tocar código.
+    psi_window_weeks: int = 4
+    decile_window_weeks: int = 4
+    decile_min_obs: int = 100
+    n_deciles: int = 10
+    # Ventana del baseline: primeras N semanas ISO de `baseline_year` dentro
+    # de variables_serc_*.csv. Ver ADR §8.2.29.
+    baseline_year: int = 2026
+    baseline_n_weeks: int = 4
     config_dir: Path = field(default_factory=Path)  # path absoluto, set por loader
 
     # ------------------------------------------------------------------
@@ -261,6 +272,12 @@ class ModelConfig:
             segments=segments,
             name_mapping=dict(data["name_mapping"]),
             extra_serc_variables=list(data["extra_serc_variables"]),
+            psi_window_weeks=int(data.get("psi_window_weeks", 4)),
+            decile_window_weeks=int(data.get("decile_window_weeks", 4)),
+            decile_min_obs=int(data.get("decile_min_obs", 100)),
+            n_deciles=int(data.get("n_deciles", 10)),
+            baseline_year=int(data.get("baseline_year", 2026)),
+            baseline_n_weeks=int(data.get("baseline_n_weeks", 4)),
             config_dir=path.parent,
         )
 

@@ -652,20 +652,63 @@ Trazabilidad de qué items de este documento ya quedaron cerrados, parcialmente 
 - [ ] Drop+rebuild en RDS productivo + re-bootstrap + backfill (autorización del usuario; difertido hasta cerrar más desarrollo local).
 - [ ] Smoke test en ECS Fargate con la imagen actualizada.
 
-### Iteración 2 — Pendiente (P1)
+### Iteración 2 — Limpieza estructural (cerrada 2026-05-11)
 
-- [ ] **A3** — Reglas de agregación de severidad (`status_*_count_*`) a tabla `META_AGGREGATION_RULES`. Hoy viven en `config/settings.py`; deben ser por-modelo y versionadas.
-- [ ] **A4** — Promover otros magic numbers a config: `MISSING_SENTINEL` por variable en `META_VARIABLES`, `DECILE_MIN_OBS` por modelo, `PSI_WINDOW_WEEKS` / `DECILE_WINDOW_WEEKS` si se valida que dependen del modelo. (`MISSING_SENTINEL` y `NUM_BINS_NUMERIC` ya quedaron por-modelo dentro de A6 al persistirse en `config.json`; lo que queda es por-variable.)
-- [ ] **D7** — Consolidar `bootstrap.py` y `bootstrap_v2.py` en un único bootstrap (V2 ya es oficial). Ahora es trivial porque la lógica del baseline está acoplada al config del modelo.
+Ámbito: sacar configuración de severidad y ventanas de cómputo del código, consolidar el bootstrap V1+V2. Verificada localmente con suite 158/158 + drop+rebuild + ETL ventana rodante (4 semanas 2026-03-16..2026-04-06) + pipeline end-to-end.
 
-### Iteración 3 — BI / observabilidad (P1)
+- [x] **A3** — Reglas de agregación de severidad (`status_*_count_*`) movidas de `config/settings.py` a nueva tabla SCD2 `META_AGGREGATION_RULES`. Resolver `data/aggregation_rules.py::load_aggregation_rules` con precedencia specific → global → defaults Python (mismo patrón que `AlertEvaluator.get_threshold`). Seed idempotente en bootstrap (`seed_default_global_rules`, valid_from=2025-01-01). `_aggregate_status` y `_build_severity_legend` aceptan el dict resuelto.
+- [x] **A4** — `psi_window_weeks`, `decile_window_weeks`, `decile_min_obs`, `n_deciles`, `baseline_year`, `baseline_n_weeks` movidos a `ModelConfig` con defaults vía `data.get(..., default)` (backwards-compat, sin tocar `required`). `MetricsCalculator(session, config=...)` los lee y los pasa a `get_psi_for_all_variables`, `get_null_rates`, `get_decile_data_for_segment` (firma ampliada con `n_deciles` y `window_weeks`). Constantes de módulo se mantienen como defaults de kwarg.
+- [x] **MISSING_SENTINEL** — Descartado per-variable: se queda model-wide en `ModelConfig.missing_sentinel` (config.json). Razones documentadas en `devlog.md` (2026-05-11): es marcador, no valor; uniforme del extract upstream; sin colisiones en BAZBOOST_V1. YAGNI hasta que un modelo legítimamente lo necesite.
+- [x] **D7** — `bootstrap.py` y `bootstrap_v2.py` consolidados en un solo `ModelBootstrap` con el baseline V2 (variables_serc, oficial per ADR §8.2.29). Path WIDE (`base_train_test_bb.csv`) retirado del código (recuperable desde git si fuera necesario). `scripts/run_bootstrap_v2.py` eliminado; `scripts/run_bootstrap.py` absorbió los flags `--year`, `--n-weeks`, `--variables-serc-file`.
 
-- [ ] **B1** — Índice compuesto en `FACT_PERFORMANCE_INDIVIDUAL (model_registry_id, origination_week, ventana)`. Ya identificado en `docs/backlog.md §1`.
-- [ ] **B2** — Índices adicionales faltantes en `FACT_DISTRIBUTIONS`, `FACT_METRICS_HISTORY`, `FACT_PERFORMANCE_BINNED`, `META_METRIC_THRESHOLDS`.
-- [ ] **B3** — Denormalizar `FACT_METRICS_HISTORY` con `metric_name`, `target_name`, `segment_id`, `origination_week` para consumo BI directo.
-- [ ] **B4** — Desacoplar `metric_id` de SCD2 de thresholds (denormalizar `metric_name` en `FACT_METRICS_HISTORY`).
-- [ ] **E1** — Tabla `FACT_PIPELINE_RUNS` con métricas operativas del pipeline (tiempos, status, errores).
-- [ ] **E2** — Alarmas SNS para fallas del cron.
+**Tests:** suite final 158 passed (+11 vs cierre Iter 1): +8 nuevos en `test_aggregation_rules.py`, +3 en `test_model_config.py` para los campos A4. `test_status_aggregation.py` adaptado para parametrizar desde `DEFAULT_AGGREGATION_RULES` en vez de `settings`. `conftest.py` siembra reglas globales en el fixture `populated_engine`.
+
+**Documentación de cierre:**
+- ADR formal en `docs/decisions.md §8.2.31` con scope completo, decisión MISSING_SENTINEL, schema de `META_AGGREGATION_RULES`, supersede §8.2.29 (parte de consolidación de bootstrap).
+- `docs/architecture/data_model.md`: nueva §2.4 `META_AGGREGATION_RULES`, §1.7 (MISSING_SENTINEL) actualizada para reflejar que vive en `ModelConfig`, §4.7 (`overall_status`) ahora apunta a la tabla en vez de a `settings.py`.
+- `status_*_count_*` eliminados de `config/settings.py` (verificado con grep: cero referencias en código activo).
+
+**Pendiente operativo (fuera de scope de código local):**
+- [ ] Drop+rebuild en RDS productivo + re-bootstrap + backfill (autorización del usuario).
+- [ ] Smoke test en ECS Fargate con la imagen actualizada.
+
+### Iteración 3 — BI / observabilidad (cerrada 2026-05-18)
+
+Ámbito: índices que evitan degradación al crecer el histórico en RDS + histórico operativo del pipeline persistido + runbook de alarmas SNS. Verificada localmente con suite **172/172** + drop+rebuild + ETL ventana rodante (4 semanas 2026-03-16..2026-04-06) + pipeline end-to-end + 2 re-runs append-only.
+
+- [x] **B1** — `Index("ix_fact_perf_individual_lookup", "model_registry_id", "origination_week", "ventana")` agregado en `FactPerformanceIndividual.__table_args__` (`db/models.py`). La UC actual `(credito_id, model_registry_id, ventana)` no cubría el query pattern del Gini/KS.
+- [x] **B2** — Alcance reducido tras auditoría:
+  - `FACT_DISTRIBUTIONS` y `FACT_METRICS_HISTORY` quedaron **descartados** del scope porque la `UniqueConstraint` actual ya los cubre como prefijo (UC = `(model_registry_id, variable_id, origination_week, bin_label)` cubre `(model_registry_id, variable_id, origination_week)`; idem para `FACT_METRICS_HISTORY`).
+  - `Index("ix_fact_perf_binned_metric", "model_registry_id", "origination_week", "metric_type")` agregado — la UC tiene `execution_week` intercalado y no sirve como prefijo.
+  - `Index("ix_meta_metric_thresholds_active", "valid_to", postgresql_where=text("valid_to IS NULL"), sqlite_where=text("valid_to IS NULL"))` — índice parcial, primero en el codebase; acelera el scan del `AlertEvaluator`.
+- [x] **E1** — Nueva tabla SCD-no-aplica/append-only `FACT_PIPELINE_RUNS` (`db/models.py`) + módulo `pipeline/run_recorder.py::PipelineRunRecorder` con mini-sesiones independientes que sobreviven a rollbacks de los steps. `PipelineOrchestrator.run()` instrumentado con timings `time.perf_counter` por step + try/except global que persiste `error_message` + `error_stack` y re-lanza. Helper `data/model_registry.py::resolve_model_registry_id` para mapear `model_id → META_MODEL_REGISTRY.id` (primer submodel_id activo). Re-runs generan filas nuevas; BI usa `MAX(started_at)` para el más reciente.
+- [x] **E2** — Documentación pura de infra (sin código). Nueva §4 en `docs/infrastructure/aws_deployment.md` con runbook completo: SNS Topic `mlmonitor-failures`, log metric filter sobre `/ecs/mlmonitor` (`MLMonitor/PipelineFailures`), CloudWatch Alarm (≥1 evento en 5 min) → SNS, snippet de smoke test (`run-task` con `exit 1`). El path complementario (auditoría histórica en RDS) ya está cubierto por la tabla `FACT_PIPELINE_RUNS` de E1.
+
+**Tests:** suite final **172 passed** (+10 vs Iter 2): +4 en `test_models_indexes.py`, +6 en `test_pipeline_run_recorder.py`. Cero regresiones.
+
+**Diferimiento explícito (B3 y B4)** — decisión del 2026-05-18: B3 (denormalizar `metric_name`/`target_name`/`segment_id`/`origination_week` en `FACT_METRICS_HISTORY`) y B4 (desacoplar `metric_id` de la SCD2 de thresholds) **no se implementan en esta iteración**. Razón: se prefiere mantener la normalización máxima del esquema estrella aunque eso obligue a JOINs adicionales en BI. Trade-off asumido. Se re-evaluará cuando el consumo desde BI (Power BI / Tableau) se vuelva un dolor real medible — hasta entonces los JOINs son aceptables. Movidos a la sección final de descartados.
+
+**Documentación de cierre:**
+- ADR formal en `docs/decisions.md §8.2.32` con scope completo, justificación de `model_registry_id` (no `model_id` string), justificación de append-only, decisión de B3/B4.
+- `docs/architecture/data_model.md` actualizado — nueva §3.6 `FACT_PIPELINE_RUNS`.
+- `docs/infrastructure/aws_deployment.md §4` con runbook E2.
+
+**Pendiente operativo (fuera de scope de código local):**
+- [ ] Drop+rebuild en RDS productivo + re-bootstrap (los índices nuevos se aplican vía `Base.metadata.create_all`; snippet `CREATE INDEX IF NOT EXISTS` para aplicación incremental sin drop está documentado abajo) (autorización del usuario).
+- [ ] Crear SNS Topic + email subscription + log metric filter + CloudWatch Alarm en AWS (runbook en `docs/infrastructure/aws_deployment.md §4`).
+- [ ] Smoke test en ECS Fargate con la imagen actualizada.
+
+**Snippet de aplicación incremental de índices en RDS (sin drop):**
+```sql
+CREATE INDEX IF NOT EXISTS ix_fact_perf_individual_lookup
+  ON "FACT_PERFORMANCE_INDIVIDUAL" (model_registry_id, origination_week, ventana);
+CREATE INDEX IF NOT EXISTS ix_fact_perf_binned_metric
+  ON "FACT_PERFORMANCE_BINNED" (model_registry_id, origination_week, metric_type);
+CREATE INDEX IF NOT EXISTS ix_meta_metric_thresholds_active
+  ON "META_METRIC_THRESHOLDS" (valid_to) WHERE valid_to IS NULL;
+CREATE INDEX IF NOT EXISTS ix_fact_pipeline_runs_lookup
+  ON "FACT_PIPELINE_RUNS" (model_registry_id, calculation_week, started_at);
+```
 
 ### Iteración 4 — Multi-modelo profundo (P2/P3, depende del segundo modelo)
 
@@ -710,6 +753,8 @@ Trazabilidad de qué items de este documento ya quedaron cerrados, parcialmente 
 
 ### Items que quedaron descartados o consolidados
 
+- **B3** — Denormalizar `FACT_METRICS_HISTORY` con `metric_name`, `target_name`, `segment_id`, `origination_week` para BI directo. **Diferido en Iter 3 (2026-05-18)**: se prefiere mantener la normalización máxima del esquema estrella aunque obligue a JOINs en BI. Re-evaluar cuando el consumo desde Power BI / Tableau se vuelva un dolor real medible (queries lentas, esfuerzo de modelado, mantenimiento de vistas materializadas, etc.).
+- **B4** — Desacoplar `metric_id` de SCD2 de thresholds (denormalizar `metric_name` en `FACT_METRICS_HISTORY`). **Diferido en Iter 3 (2026-05-18)** por la misma razón que B3 — son cambios complementarios y se atacarán juntos cuando entre el primer caso de uso real de BI.
 - **B5** — Tabla `META_MODELS` separada de `META_MODEL_REGISTRY`: P3, esperar al segundo modelo no segmentado para evaluarlo. No hacer especulativamente.
 - **B6** — `score_max` con FK: queda absorbido en B5 si se hace; bajo prioridad.
 - **B7** — Histórico SCD2 de `META_BASELINE_DISTRIBUTIONS`: acoplado a la duda D6 (refresco del baseline). Esperar a que el usuario defina cadencia de refresco.

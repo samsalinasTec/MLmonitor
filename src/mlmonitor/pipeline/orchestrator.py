@@ -6,8 +6,15 @@ Step 2: ReportBuilder.build()              → consulta DB + llama LLM (Bedrock)
 Step 3: PDFRenderer.render_pdf()           → genera archivo PDF
 Step 3b: S3Uploader.upload()               → sube PDF a S3 (si S3_BUCKET configurado)
 Step 4: SESEmailSender.send_report()       → envía correo via SES
+
+Cada `run` se persiste en FACT_PIPELINE_RUNS vía PipelineRunRecorder (Iter 3 §E1):
+una fila con timings por step, status final, fleet summary y, si aplica,
+error_message + stack. Si la pipeline truena, la fila queda con status="failed"
+y la excepción se re-lanza para preservar el contrato de `scripts/run_pipeline.py`.
 """
 
+import time
+import traceback
 from datetime import date, timedelta
 from pathlib import Path
 
@@ -15,10 +22,13 @@ from sqlalchemy import func
 from sqlalchemy.engine import Engine
 
 from mlmonitor.analyst.base import AnalysisContext, AnalysisResult
+from mlmonitor.data.model_config import ModelConfig
+from mlmonitor.data.model_registry import resolve_model_registry_id
 from mlmonitor.db.models import Base, FactDistributions
 from mlmonitor.db.session import get_session
 from mlmonitor.email.sender import SESEmailSender
 from mlmonitor.metrics.calculator import MetricsCalculator
+from mlmonitor.pipeline.run_recorder import PipelineRunRecorder
 from mlmonitor.report.builder import ReportBuilder
 from mlmonitor.report.renderer import PDFRenderer
 
@@ -85,120 +95,174 @@ class PipelineOrchestrator:
         print(f"Semana de cálculo: {calculation_date}")
         print(f"{'='*60}")
 
-        # ----------------------------------------------------------------
-        # Step 1: Calcular métricas
-        # ----------------------------------------------------------------
-        print("\n[Step 1] Calculando métricas...")
+        # Recorder de FACT_PIPELINE_RUNS — se abre antes del Step 1 y se cierra
+        # en finally con status="success" | "partial" | "failed" según resultado.
         with get_session(self.engine) as session:
-            calculator = MetricsCalculator(session)
-            metrics_rows = calculator.run_for_model(model_id, calculation_date)
+            model_registry_id = resolve_model_registry_id(session, model_id)
+        recorder = PipelineRunRecorder(self.engine, model_registry_id, calculation_date)
+        recorder.start()
 
-        results["steps"]["metrics"] = {
-            "status": "ok",
-            "rows_inserted": len(metrics_rows),
-        }
-        print(f"         ✓ {len(metrics_rows)} métricas calculadas y guardadas")
-
-        # ----------------------------------------------------------------
-        # Step 2: Construir reporte (+ LLM si hay analista)
-        # ----------------------------------------------------------------
-        print("\n[Step 2] Construyendo reporte...")
-        with get_session(self.engine) as session:
-            builder = ReportBuilder(session)
-            context, llm_result = builder.build(
-                model_id=model_id,
-                calculation_week=calculation_date,
-                analyst=analyst,
-            )
-
-        # Enrich context with data freshness info
-        context.latest_data_week = calculation_date
-        context.data_lag_weeks = data_lag_weeks
-
-        llm_status = "ok (con LLM)" if llm_result else "ok (sin LLM)"
-        results["steps"]["report_build"] = {
-            "status": llm_status,
-            "segments": len(context.segments),
-            "fleet_summary": context.fleet_summary,
-        }
-        print(f"         ✓ Contexto construido: {len(context.segments)} segmentos")
-        if llm_result:
-            print(f"         ✓ Narrativas LLM generadas")
-
-        # ----------------------------------------------------------------
-        # Step 3: Generar PDF
-        # ----------------------------------------------------------------
-        print("\n[Step 3] Generando PDF...")
-        renderer = PDFRenderer(output_dir=self.output_dir)
-        pdf_path = renderer.render_pdf(
-            context=context,
-            result=llm_result,
-            filename=f"mlmonitor_{calculation_date.isoformat()}.pdf",
-        )
-
-        results["steps"]["pdf"] = {
-            "status": "ok",
-            "path": str(pdf_path),
-        }
-        print(f"         ✓ Reporte guardado: {pdf_path}")
-
-        # ----------------------------------------------------------------
-        # Step 3b: Subir PDF a S3 (opcional — solo si S3_BUCKET configurado)
-        # ----------------------------------------------------------------
+        context = None
+        pdf_path = None
         s3_uri = None
-        from config.settings import settings as _s
-        if _s.s3_bucket:
-            print("\n[Step 3b] Subiendo PDF a S3...")
-            try:
-                from mlmonitor.storage.s3_uploader import S3Uploader
-                s3_uri = S3Uploader.from_settings().upload(pdf_path)
-                results["steps"]["s3_upload"] = {"status": "ok", "uri": s3_uri}
-            except Exception as e:
-                results["steps"]["s3_upload"] = {"status": "error", "error": str(e)}
-                print(f"         ✗ Error subiendo a S3: {e}")
-        else:
-            results["steps"]["s3_upload"] = {"status": "skipped"}
 
-        # ----------------------------------------------------------------
-        # Step 4: Enviar por email via SES
-        # ----------------------------------------------------------------
-        if send_email:
-            print("\n[Step 4] Enviando reporte por email (SES)...")
+        try:
+            # ----------------------------------------------------------------
+            # Step 1: Calcular métricas
+            # ----------------------------------------------------------------
+            # Cargar ModelConfig para tener las ventanas y umbrales declarados
+            # del modelo (ver A4). Si el config no existe, MetricsCalculator
+            # cae a defaults de módulo — útil para escenarios de test ad-hoc.
             try:
-                email_sender = SESEmailSender.from_settings()
-                success = email_sender.send_report(
-                    recipients=_s.recipient_list,
-                    pdf_path=pdf_path,
+                config = ModelConfig.for_model(model_id)
+            except FileNotFoundError:
+                config = None
+                print(f"[pipeline] WARN: sin config.json para {model_id}; usando defaults de módulo")
+
+            print("\n[Step 1] Calculando métricas...")
+            t0 = time.perf_counter()
+            with get_session(self.engine) as session:
+                calculator = MetricsCalculator(session, config=config)
+                metrics_rows = calculator.run_for_model(model_id, calculation_date)
+            recorder.record_step("metrics", time.perf_counter() - t0)
+
+            results["steps"]["metrics"] = {
+                "status": "ok",
+                "rows_inserted": len(metrics_rows),
+            }
+            print(f"         ✓ {len(metrics_rows)} métricas calculadas y guardadas")
+
+            # ----------------------------------------------------------------
+            # Step 2: Construir reporte (+ LLM si hay analista)
+            # ----------------------------------------------------------------
+            print("\n[Step 2] Construyendo reporte...")
+            t0 = time.perf_counter()
+            with get_session(self.engine) as session:
+                builder = ReportBuilder(session)
+                context, llm_result = builder.build(
+                    model_id=model_id,
+                    calculation_week=calculation_date,
+                    analyst=analyst,
                 )
-                results["steps"]["email"] = {
-                    "status": "ok" if success else "no_recipients",
-                    "recipients": _s.recipient_list,
-                }
-                if success:
-                    print(f"         ✓ Email enviado a {len(_s.recipient_list)} destinatarios")
-            except Exception as e:
-                results["steps"]["email"] = {"status": "error", "error": str(e)}
-                print(f"         ✗ Error enviando email: {e}")
-        else:
-            print("\n[Step 4] Email omitido (--no-email)")
-            results["steps"]["email"] = {"status": "skipped"}
+            recorder.record_step("report", time.perf_counter() - t0)
 
-        # ----------------------------------------------------------------
-        # Resumen
-        # ----------------------------------------------------------------
-        print(f"\n{'='*60}")
-        print("Pipeline completado exitosamente.")
-        fleet = context.fleet_summary
-        print(
-            f"Estado de flota: {fleet['total']} segmentos — "
-            f"{fleet['ok']} OK | {fleet['warning']} WARNING | {fleet['critical']} CRITICAL"
-        )
-        print(f"Reporte local: {pdf_path}")
-        if s3_uri:
-            print(f"Reporte S3:    {s3_uri}")
-        print(f"{'='*60}\n")
+            # Enrich context with data freshness info
+            context.latest_data_week = calculation_date
+            context.data_lag_weeks = data_lag_weeks
 
-        results["pdf_path"] = str(pdf_path)
-        results["s3_uri"] = s3_uri
-        results["fleet_summary"] = context.fleet_summary
-        return results
+            llm_status = "ok (con LLM)" if llm_result else "ok (sin LLM)"
+            results["steps"]["report_build"] = {
+                "status": llm_status,
+                "segments": len(context.segments),
+                "fleet_summary": context.fleet_summary,
+            }
+            print(f"         ✓ Contexto construido: {len(context.segments)} segmentos")
+            if llm_result:
+                print(f"         ✓ Narrativas LLM generadas")
+
+            # ----------------------------------------------------------------
+            # Step 3: Generar PDF
+            # ----------------------------------------------------------------
+            print("\n[Step 3] Generando PDF...")
+            t0 = time.perf_counter()
+            renderer = PDFRenderer(output_dir=self.output_dir)
+            pdf_path = renderer.render_pdf(
+                context=context,
+                result=llm_result,
+                filename=f"mlmonitor_{calculation_date.isoformat()}.pdf",
+            )
+            recorder.record_step("pdf", time.perf_counter() - t0)
+
+            results["steps"]["pdf"] = {
+                "status": "ok",
+                "path": str(pdf_path),
+            }
+            print(f"         ✓ Reporte guardado: {pdf_path}")
+
+            # ----------------------------------------------------------------
+            # Step 3b: Subir PDF a S3 (opcional — solo si S3_BUCKET configurado)
+            # ----------------------------------------------------------------
+            from config.settings import settings as _s
+            if _s.s3_bucket:
+                print("\n[Step 3b] Subiendo PDF a S3...")
+                t0 = time.perf_counter()
+                try:
+                    from mlmonitor.storage.s3_uploader import S3Uploader
+                    s3_uri = S3Uploader.from_settings().upload(pdf_path)
+                    results["steps"]["s3_upload"] = {"status": "ok", "uri": s3_uri}
+                except Exception as e:
+                    results["steps"]["s3_upload"] = {"status": "error", "error": str(e)}
+                    print(f"         ✗ Error subiendo a S3: {e}")
+                recorder.record_step("s3", time.perf_counter() - t0)
+                recorder.set_s3_uri(s3_uri)
+            else:
+                results["steps"]["s3_upload"] = {"status": "skipped"}
+
+            # ----------------------------------------------------------------
+            # Step 4: Enviar por email via SES
+            # ----------------------------------------------------------------
+            if send_email:
+                print("\n[Step 4] Enviando reporte por email (SES)...")
+                t0 = time.perf_counter()
+                try:
+                    email_sender = SESEmailSender.from_settings()
+                    success = email_sender.send_report(
+                        recipients=_s.recipient_list,
+                        pdf_path=pdf_path,
+                    )
+                    results["steps"]["email"] = {
+                        "status": "ok" if success else "no_recipients",
+                        "recipients": _s.recipient_list,
+                    }
+                    if success:
+                        print(f"         ✓ Email enviado a {len(_s.recipient_list)} destinatarios")
+                except Exception as e:
+                    results["steps"]["email"] = {"status": "error", "error": str(e)}
+                    print(f"         ✗ Error enviando email: {e}")
+                recorder.record_step("email", time.perf_counter() - t0)
+            else:
+                print("\n[Step 4] Email omitido (--no-email)")
+                results["steps"]["email"] = {"status": "skipped"}
+
+            # ----------------------------------------------------------------
+            # Resumen
+            # ----------------------------------------------------------------
+            print(f"\n{'='*60}")
+            print("Pipeline completado exitosamente.")
+            fleet = context.fleet_summary
+            print(
+                f"Estado de flota: {fleet['total']} segmentos — "
+                f"{fleet['ok']} OK | {fleet['warning']} WARNING | {fleet['critical']} CRITICAL"
+            )
+            print(f"Reporte local: {pdf_path}")
+            if s3_uri:
+                print(f"Reporte S3:    {s3_uri}")
+            print(f"{'='*60}\n")
+
+            results["pdf_path"] = str(pdf_path)
+            results["s3_uri"] = s3_uri
+            results["fleet_summary"] = context.fleet_summary
+
+            # success vs partial: si algún step opcional (s3, email) reportó error,
+            # los steps obligatorios (metrics, report, pdf) sí completaron OK
+            # — el pipeline se considera "partial".
+            final_status = _derive_final_status(results["steps"])
+            recorder.finish(final_status, fleet_summary=context.fleet_summary)
+            return results
+
+        except Exception as e:
+            recorder.finish(
+                status="failed",
+                fleet_summary=getattr(context, "fleet_summary", None),
+                error_message=str(e),
+                error_stack=traceback.format_exc(),
+            )
+            raise
+
+
+def _derive_final_status(steps: dict) -> str:
+    """success si todos los steps no-skipped están OK; partial si algún opcional falló."""
+    optional_step_keys = ("s3_upload", "email")
+    if any(steps.get(k, {}).get("status") == "error" for k in optional_step_keys):
+        return "partial"
+    return "success"

@@ -28,10 +28,9 @@ class Settings(BaseSettings):
     # Artifacts
     artifacts_dir: str = "artifacts"
 
-    # Severity aggregation — ver report.builder._aggregate_status
-    status_crit_count_to_critical: int = 8
-    status_crit_count_to_warning: int = 5
-    status_warn_count_to_warning: int = 8
+    # Nota: las reglas de severidad (status_*_count_*) vivieron aquí hasta
+    # Iteración 2 (A3 / ADR §8.2.31). Ahora viven en META_AGGREGATION_RULES
+    # con resolución vía mlmonitor.data.aggregation_rules.load_aggregation_rules.
 
     @property
     def reports_dir(self) -> Path:

@@ -3,15 +3,17 @@ Tests para la lógica de agregación de estado del segmento.
 
 `_aggregate_status` distingue:
 - Headline metrics (psi_score, gini_<primary>, ks_<primary>): 1 crítica → CRÍTICO inmediato.
-- Agregables (resto): escalan por conteo según settings:
+- Agregables (resto): escalan por conteo según las reglas resueltas:
     `status_crit_count_to_warning`  → cuántas críticas agregables → WARNING
     `status_crit_count_to_critical` → cuántas críticas agregables → CRITICAL
     `status_warn_count_to_warning`  → cuántas warnings agregables → WARNING
 - psi_max queda excluida del conteo para no doble-contar.
 
-Estos tests están **parametrizados por los valores actuales de `config.settings`**,
-no por números hardcodeados, para que sean robustos a cambios futuros de threshold
-(decisión post-2026-05-05 cuando se subieron los umbrales 1/3/4 → 5/8/8).
+Iteración 2 A3 sacó las reglas de `config/settings.py` y las movió a
+`META_AGGREGATION_RULES`. Estos tests parametrizan por `DEFAULT_AGGREGATION_RULES`
+del resolver — la fuente única de defaults, idéntica a la que se siembra como
+fila global en bootstrap. Los valores actuales son los mismos que los previos
+en settings (8/5/8 tras el ajuste de 2026-05-05).
 """
 
 import sys
@@ -20,7 +22,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from config.settings import settings
+from mlmonitor.data.aggregation_rules import DEFAULT_AGGREGATION_RULES
 from mlmonitor.report.builder import (
     STATUS_DISPLAY_ES,
     _aggregate_status,
@@ -29,6 +31,11 @@ from mlmonitor.report.builder import (
 )
 
 PRIMARY = "b_malo8_13"
+
+# Aliases para mantener legibilidad sin retocar todas las invocaciones.
+CRIT_TO_CRITICAL = int(DEFAULT_AGGREGATION_RULES["status_crit_count_to_critical"])
+CRIT_TO_WARNING = int(DEFAULT_AGGREGATION_RULES["status_crit_count_to_warning"])
+WARN_TO_WARNING = int(DEFAULT_AGGREGATION_RULES["status_warn_count_to_warning"])
 
 
 def _alert(metric: str, flag: int, kind: str = "PSI") -> dict:
@@ -86,7 +93,7 @@ def test_headline_critico_gana_a_conteo_agregable():
     """Si hay headline crítico Y agregables críticos, prevalece el headline."""
     alerts = [
         _alert("psi_score", 2),
-        *_criticas(settings.status_crit_count_to_critical),
+        *_criticas(CRIT_TO_CRITICAL),
     ]
     status, reason = _aggregate_status(alerts, PRIMARY)
     assert status == "CRITICAL"
@@ -109,7 +116,7 @@ def test_is_headline_keys():
 
 def test_criticas_bajo_warning_threshold_es_ok():
     """Críticas agregables por debajo del threshold de WARNING → OK."""
-    n = settings.status_crit_count_to_warning - 1
+    n = CRIT_TO_WARNING - 1
     alerts = _criticas(n)
     status, _ = _aggregate_status(alerts, PRIMARY)
     assert status == "OK"
@@ -117,7 +124,7 @@ def test_criticas_bajo_warning_threshold_es_ok():
 
 def test_criticas_iguales_al_warning_threshold_es_warning():
     """Críticas agregables == status_crit_count_to_warning → WARNING."""
-    n = settings.status_crit_count_to_warning
+    n = CRIT_TO_WARNING
     alerts = _criticas(n)
     status, reason = _aggregate_status(alerts, PRIMARY)
     assert status == "WARNING"
@@ -126,8 +133,8 @@ def test_criticas_iguales_al_warning_threshold_es_warning():
 
 def test_criticas_entre_warning_y_critical_threshold_es_warning():
     """Críticas agregables entre warning_threshold (incl) y critical_threshold (excl) → WARNING."""
-    n = settings.status_crit_count_to_critical - 1
-    if n < settings.status_crit_count_to_warning:
+    n = CRIT_TO_CRITICAL - 1
+    if n < CRIT_TO_WARNING:
         # Caso degenerado de configuración: skip
         return
     alerts = _criticas(n)
@@ -137,7 +144,7 @@ def test_criticas_entre_warning_y_critical_threshold_es_warning():
 
 def test_criticas_iguales_al_critical_threshold_es_critical():
     """Críticas agregables == status_crit_count_to_critical → CRITICAL."""
-    n = settings.status_crit_count_to_critical
+    n = CRIT_TO_CRITICAL
     alerts = _criticas(n)
     status, _ = _aggregate_status(alerts, PRIMARY)
     assert status == "CRITICAL"
@@ -145,7 +152,7 @@ def test_criticas_iguales_al_critical_threshold_es_critical():
 
 def test_warnings_bajo_warn_threshold_es_ok():
     """Warnings agregables bajo el threshold → OK."""
-    n = settings.status_warn_count_to_warning - 1
+    n = WARN_TO_WARNING - 1
     alerts = _warnings(n)
     status, _ = _aggregate_status(alerts, PRIMARY)
     assert status == "OK"
@@ -153,7 +160,7 @@ def test_warnings_bajo_warn_threshold_es_ok():
 
 def test_warnings_iguales_al_warn_threshold_es_warning():
     """Warnings agregables == status_warn_count_to_warning → WARNING."""
-    n = settings.status_warn_count_to_warning
+    n = WARN_TO_WARNING
     alerts = _warnings(n)
     status, reason = _aggregate_status(alerts, PRIMARY)
     assert status == "WARNING"
@@ -174,7 +181,7 @@ def test_psi_max_no_doble_cuenta():
     real es la siguiente: con (warning_threshold - 1) críticas + psi_max,
     sin doble-contar es OK; con doble-conteo sería WARNING.
     """
-    n = settings.status_crit_count_to_warning - 1
+    n = CRIT_TO_WARNING - 1
     alerts = [
         _alert("psi_max", 2, "PSI Máximo"),
         *_criticas(n),
@@ -190,7 +197,7 @@ def test_gini_no_primario_es_agregable():
     Construimos warning_threshold gini secundarios críticos (no headline):
     debe escalar a WARNING.
     """
-    n = settings.status_crit_count_to_warning
+    n = CRIT_TO_WARNING
     alerts = [
         _alert(f"gini_b_malo3_4_var_{i}", 2, "Gini") for i in range(n)
     ]
@@ -225,7 +232,7 @@ def test_severity_legend_critical_count_appears_in_text():
     """
     legend = _build_severity_legend()
     crit_rules = " ".join(legend[0]["rules"])
-    assert str(settings.status_crit_count_to_critical) in crit_rules
+    assert str(CRIT_TO_CRITICAL) in crit_rules
 
 
 def test_severity_legend_warning_thresholds_appear_in_text():
@@ -233,8 +240,8 @@ def test_severity_legend_warning_thresholds_appear_in_text():
     aparecer en la fila WARNING."""
     legend = _build_severity_legend()
     warn_rules = " ".join(legend[1]["rules"])
-    assert str(settings.status_crit_count_to_warning) in warn_rules
-    assert str(settings.status_warn_count_to_warning) in warn_rules
+    assert str(CRIT_TO_WARNING) in warn_rules
+    assert str(WARN_TO_WARNING) in warn_rules
 
 
 def test_severity_legend_ok_has_one_rule():
